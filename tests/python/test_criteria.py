@@ -86,6 +86,58 @@ def test_components_missing_frequency_or_out_of_domain():
     assert r.status == "complies" and r.governing == "vertical/row-1" and r.margin_mm_s == pytest.approx(25.4 - 12.0)
 
 
+def test_recorded_peak_above_the_components_present_is_evaluated():
+    # ppv_mm_s (component_max) es el pico del evento: si supera a las componentes presentes, también se evalúa.
+    ev = _ev(ppv_mm_s=30.0, ppv_t_mm_s=10.0, freq_t_hz=10.0)
+    r = evaluate(ev, "OSMRE-30CFR816.67", "distance-table").iloc[0]
+    assert r.status == "exceeds" and r.governing == "row-1" and r.limit_mm_s == pytest.approx(25.4)
+    r = evaluate(ev, "USBM-RI8507-1980", "appendix-b-drywall").iloc[0]
+    assert r.status == "exceeds" and r.governing == "segment-1" and r.margin_mm_s == pytest.approx(19.05 - 30.0)
+    r = evaluate(_ev(ppv_mm_s=30.0, ppv_t_mm_s=10.0, freq_t_hz=10.0, frequency_hz=NAN),
+                 "USBM-RI8507-1980", "appendix-b-drywall").iloc[0]
+    assert r.status == "not_comparable" and "frequency_hz" in r.reason
+    # ppv_mm_s igual a la componente mayor y sin frequency_hz: no agrega nada.
+    full = _ev(ppv_mm_s=15.0, frequency_hz=NAN, ppv_t_mm_s=10.0, freq_t_hz=10.0, ppv_v_mm_s=15.0, freq_v_hz=50.0,
+               ppv_l_mm_s=12.0, freq_l_hz=10.0)
+    assert evaluate(full, "USBM-RI8507-1980", "appendix-b-drywall").iloc[0].status == "complies"
+    # Componentes todas vacías: se usa ppv_mm_s.
+    r = evaluate(_ev(ppv_t_mm_s=NAN, ppv_v_mm_s=NAN, ppv_l_mm_s=NAN, freq_t_hz=NAN),
+                 "USBM-RI8507-1980", "appendix-b-drywall").iloc[0]
+    assert r.status == "complies" and r.governing == "segment-1"
+
+
+def test_bad_ppv_values_are_not_comparable():
+    p, c = "USBM-RI8507-1980", "appendix-b-drywall"
+    r = evaluate(_ev(ppv_t_mm_s=-30.0, ppv_v_mm_s=5.0, freq_v_hz=10.0), p, c).iloc[0]
+    assert r.status == "not_comparable" and "ppv_t_mm_s" in r.reason and math.isnan(r.limit_mm_s)
+    r = evaluate(_ev(ppv_mm_s=NAN), p, c).iloc[0]
+    assert r.status == "not_comparable" and "ppv_mm_s" in r.reason
+    r = evaluate(_ev(ppv_mm_s=0.0), p, c).iloc[0]
+    assert r.status == "not_comparable" and "ppv_mm_s" in r.reason
+
+
+def test_exceedance_wins_over_a_component_without_frequency():
+    p, c = "USBM-RI8507-1980", "appendix-b-drywall"
+    r = evaluate(_ev(ppv_t_mm_s=30.0, freq_t_hz=10.0, ppv_v_mm_s=5.0), p, c).iloc[0]
+    assert r.status == "exceeds" and r.governing == "transverse/segment-1" and "freq_v_hz" in r.reason
+    r = evaluate(_ev(ppv_t_mm_s=10.0, freq_t_hz=10.0, ppv_v_mm_s=5.0), p, c).iloc[0]
+    assert r.status == "not_comparable" and "freq_v_hz" in r.reason and r.governing == ""
+
+
+def test_max_charge_at_row_boundaries():
+    kg_per_lb = 0.45359237
+    assert max_charge_unmonitored("OSMRE-30CFR816.67", 300 * 0.3048) == pytest.approx(36.0 * kg_per_lb)
+    assert max_charge_unmonitored("OSMRE-30CFR816.67", 5000 * 0.3048) == pytest.approx((5000 / 55) ** 2 * kg_per_lb)
+    assert (5000 / 55) ** 2 == pytest.approx(8264.46, abs=1e-2)
+    user = {"profile_id": "U", "quantity": "component_max", "units": {"velocity": "mm/s", "distance": "m",
+                                                                      "charge": "kg"},
+            "criteria": [{"id": "t", "kind": "distance_table",
+                          "rows": [{"d_max": 50.0, "limit": 20.0, "scaled_distance": 10.0},
+                                   {"d_max": None, "limit": 10.0}]}]}
+    with pytest.raises(ValueError, match="scaled_distance"):
+        max_charge_unmonitored(user, 20.0, "t")
+
+
 def test_distance_table_needs_distance_and_stops_at_last_row():
     with pytest.raises(ValueError, match="'distance_m'"):
         evaluate(_ev().drop(columns="distance_m"), "OSMRE-30CFR816.67", "distance-table")

@@ -9,13 +9,20 @@ to ``d <= d_max``; ``d_max`` null is the open last row) and ``flat`` (one limit)
 
 Verdict of :func:`evaluate`, one row per event:
 
-* ``complies`` when ``ppv <= limit * (1 + 1e-9)`` (equality complies), ``exceeds`` otherwise;
-* ``not_comparable`` when the event does not carry the quantity the profile asks for (never compared with another one),
-  or a frequency curve has no frequency, or a distance table has no distance;
-* ``indeterminate`` when the frequency or the distance is outside the criterion's domain.
+An event gives one or more candidate PPVs of the quantity the profile asks for (never another quantity). With
+``quantity == "component_max"`` each component column present (``ppv_t/v/l_mm_s``) is a candidate with its own frequency
+(``freq_t/v/l_hz``); when ``ppv_kind == "component_max"``, ``ppv_mm_s`` is one more candidate (with ``frequency_hz``) if
+no component is present or it is larger than every component present. A candidate complies when
+``ppv <= limit * (1 + 1e-9)`` (equality complies). The status, in this order:
 
-With ``quantity == "component_max"`` and component columns (``ppv_t/v/l_mm_s``) each component present is evaluated with
-its own frequency (``freq_t/v/l_hz``) and the one with the smallest margin (mm/s) governs.
+* ``exceeds`` if any candidate that could be evaluated exceeds its limit (``reason`` lists the ones not evaluated);
+* ``not_comparable`` if any candidate could not be evaluated: the quantity is missing, a PPV is not finite and > 0, a
+  frequency curve has no frequency, or a distance table has no distance;
+* ``indeterminate`` if any candidate's frequency or distance is outside the criterion's domain;
+* ``complies`` otherwise: every candidate was evaluated and complies.
+
+Limit, margins and ``governing`` are those of the candidate with the smallest margin (mm/s) among the exceeding ones, or
+among all the evaluated ones; NaN and empty for ``not_comparable``.
 """
 
 from __future__ import annotations
@@ -258,50 +265,73 @@ def _value(row: dict, column: str) -> float:
     return math.nan if value is None or pd.isna(value) else float(value)
 
 
-def _magnitudes(row: dict, quantity: str) -> tuple:
-    """[(component label, ppv, frequency, frequency column)] or a reason string when the quantity is missing."""
-    kind = row.get("ppv_kind")
+def _ppv(row: dict, column: str, problems: list) -> float:
+    """The PPV in ``column``; NaN when empty. A value that is not finite and > 0 is bad data: noted in ``problems``."""
+    value = _value(row, column)
+    if not math.isnan(value) and _missing(value):
+        problems.append(f"{column} is not a finite value > 0 ({value:g})")
+        return math.nan
+    return value
+
+
+def _magnitudes(row: dict, quantity: str) -> tuple[list, list]:
+    """Candidates [(component label, ppv, frequency, frequency column)] and the problems that block comparing."""
+    kind, problems, candidates = row.get("ppv_kind"), [], []
     if quantity == "component_max":
-        found = [(label, _value(row, p), _value(row, f), f) for label, p, f in _COMPONENTS if not _missing(_value(row, p))]
-        if found:
-            return found
+        for label, p, f in _COMPONENTS:
+            value = _ppv(row, p, problems)
+            if not math.isnan(value):
+                candidates.append((label, value, _value(row, f), f))
         if kind == "component_max":
-            return [("", _value(row, "ppv_mm_s"), _value(row, "frequency_hz"), "frequency_hz")]
-        return (f"the profile needs the peak component PPV (ppv_kind 'component_max' or columns "
-                f"ppv_t/v/l_mm_s); the event has ppv_kind {kind!r}")
-    column, freq = ("pvs_mm_s", "frequency_hz") if quantity == "vector_sum" else ("ppv_v_mm_s", "freq_v_hz")
-    if not _missing(_value(row, column)):
-        return [("", _value(row, column), _value(row, freq), freq)]
-    if kind == quantity:
-        return [("", _value(row, "ppv_mm_s"), _value(row, "frequency_hz"), "frequency_hz")]
-    return f"the profile needs {column} (or ppv_kind {quantity!r}); the event has ppv_kind {kind!r}"
+            peak = _ppv(row, "ppv_mm_s", problems)
+            top = max((cand[1] for cand in candidates), default=0.0)
+            # El pico registrado también se evalúa si supera a las componentes presentes (pueden faltar algunas).
+            if not math.isnan(peak) and peak > top * (1 + _REL_TOL):
+                candidates.append(("", peak, _value(row, "frequency_hz"), "frequency_hz"))
+        missing = (f"the profile needs the peak component PPV (ppv_kind 'component_max' or columns "
+                   f"ppv_t/v/l_mm_s); the event has ppv_kind {kind!r}")
+    else:
+        column, freq = ("pvs_mm_s", "frequency_hz") if quantity == "vector_sum" else ("ppv_v_mm_s", "freq_v_hz")
+        value = _ppv(row, column, problems)
+        if math.isnan(value) and kind == quantity and not problems:  # el PPV del evento ya es la magnitud pedida
+            column, freq = "ppv_mm_s", "frequency_hz"
+            value = _ppv(row, column, problems)
+        if not math.isnan(value):
+            candidates.append(("", value, _value(row, freq), freq))
+        missing = f"the profile needs {column} (or ppv_kind {quantity!r}); the event has ppv_kind {kind!r}"
+    if not candidates and not problems:
+        problems.append("ppv_mm_s is empty" if kind == quantity else missing)
+    return candidates, problems
 
 
 def _verdict(row: dict, c: Criterion, quantity: str) -> list:
+    """Precedence: exceeds > not_comparable > indeterminate > complies (complies only if every candidate complies)."""
     nan = math.nan
-    found = _magnitudes(row, quantity)
-    if isinstance(found, str):
-        return ["not_comparable", nan, nan, nan, "", c.verification, found]
-    evaluated, out_of_domain = [], ""
-    for label, ppv, freq, freq_name in found:
-        if _missing(ppv):
-            return ["not_comparable", nan, nan, nan, "", c.verification, "ppv_mm_s is missing or not positive"]
+    candidates, problems = _magnitudes(row, quantity)
+    evaluated, out_of_domain = [], []
+    for label, ppv, freq, freq_name in candidates:
         status, limit, governing, reason = _limit(c, freq, _value(row, "distance_m"), freq_name)
         if status == "not_comparable":
             if label and c.kind == "frequency_curve":
                 reason = f"the {label} component has a PPV but {reason}"
-            return ["not_comparable", nan, nan, nan, "", c.verification, reason]
-        if status == "indeterminate":
-            out_of_domain = out_of_domain or reason
-            continue
-        prefix = f"{label}/" if label and governing else ""
-        evaluated.append((limit - ppv, limit, prefix + governing, ppv))
-    if not evaluated:
-        return ["indeterminate", nan, nan, nan, "", c.verification, out_of_domain]
-    margin, limit, governing, ppv = min(evaluated, key=lambda e: e[0])
-    exceeds = any(p > lim * (1 + _REL_TOL) for _, lim, _, p in evaluated)
-    status = "exceeds" if exceeds else "indeterminate" if out_of_domain else "complies"
-    reason = out_of_domain if status == "indeterminate" else ""
+            problems.append(reason)
+        elif status == "indeterminate":
+            out_of_domain.append(reason)
+        else:
+            prefix = f"{label}/" if label and governing else ""
+            evaluated.append((limit - ppv, limit, prefix + governing, ppv))
+    exceeding = [e for e in evaluated if e[3] > e[1] * (1 + _REL_TOL)]
+    if exceeding:
+        status, (margin, limit, governing, _) = "exceeds", min(exceeding, key=lambda e: e[0])
+        reason = "; ".join(f"not evaluated: {r}" for r in problems + out_of_domain)
+    elif problems:
+        return ["not_comparable", nan, nan, nan, "", c.verification, "; ".join(problems)]
+    elif not evaluated:
+        return ["indeterminate", nan, nan, nan, "", c.verification, "; ".join(out_of_domain)]
+    else:
+        margin, limit, governing, _ = min(evaluated, key=lambda e: e[0])
+        status = "indeterminate" if out_of_domain else "complies"
+        reason = "; ".join(out_of_domain)
     return [status, limit, margin, 100.0 * margin / limit, governing, c.verification, reason]
 
 
