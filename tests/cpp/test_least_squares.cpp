@@ -53,6 +53,20 @@ TEST(Ols, ConstantYIsAPerfectFit) {
     EXPECT_NEAR(r.coefficients[1], 0.0, 1e-12);
 }
 
+TEST(Ols, ConstantYWithInexactMeanIsStillAPerfectFit) {
+    // 0.1 y 0.7 no son representables: la media calculada difiere de y en ~1e-17 y SST no da 0 exacto.
+    EXPECT_EQ(ols({{1, 2, 3}}, {0.1, 0.1, 0.1}).r_squared, 1.0);
+    EXPECT_EQ(ols({{1, 2, 3, 4, 5, 6}}, std::vector<double>(6, 0.7)).r_squared, 1.0);
+    EXPECT_EQ(ols({{1, 2, 3}}, {0.2, 0.2, 0.2}).r_squared, 1.0);
+}
+
+TEST(Ols, RSquaredStaysInUnitInterval) {
+    // Pendiente casi nula: el redondeo no debe dar r2 negativo.
+    const auto r = ols({{1, 2, 3, 4, 5}}, {0.1, 0.3, 0.2, 0.3, 0.1});
+    EXPECT_GE(r.r_squared, 0.0);
+    EXPECT_LE(r.r_squared, 1.0);
+}
+
 TEST(Ols, NoisyLineHasKnownResiduals) {
     // x = 1..4, y = 1, 3, 2, 4: pendiente 0.8, ordenada 0.5, SSE 1.8 (SST 5 - 0.8*4)
     const auto r = ols({{1, 2, 3, 4}}, {1, 3, 2, 4});

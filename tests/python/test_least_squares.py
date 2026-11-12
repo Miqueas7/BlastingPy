@@ -36,3 +36,22 @@ def test_domain_errors():
         core.ols([[1.0, 1.0, 1.0, 1.0]], [1.0, 2.0, 3.0, 4.0])
     with pytest.raises(ValueError, match="Domain error"):
         core.ols([[1.0, 2.0]], [1.0, 2.0])
+
+
+def test_two_predictors_with_noise_match_numpy():
+    rng = np.random.default_rng(7)
+    n = 20
+    x1 = rng.uniform(0, 10, n)
+    x2 = rng.uniform(-5, 5, n)
+    y = 1.5 + 0.8 * x1 - 1.2 * x2 + rng.normal(0, 0.5, n)
+    r = core.ols([x1.tolist(), x2.tolist()], y.tolist())
+    design = np.column_stack([np.ones(n), x1, x2])
+    beta = np.linalg.lstsq(design, y, rcond=None)[0]
+    resid = y - design @ beta
+    sse = float(resid @ resid)
+    sst = float(((y - y.mean()) ** 2).sum())
+    assert r.coefficients == pytest.approx(beta, rel=1e-9)
+    assert r.sse == pytest.approx(sse, rel=1e-9)
+    assert r.sigma == pytest.approx(np.sqrt(sse / (n - 3)), rel=1e-9)
+    assert r.r_squared == pytest.approx(1 - sse / sst, rel=1e-9)
+    assert r.residuals == pytest.approx(resid, abs=1e-9)

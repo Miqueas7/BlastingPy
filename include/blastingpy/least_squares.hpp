@@ -64,10 +64,11 @@ inline OlsResult ols(const std::vector<std::vector<double>>& predictors, const s
     }
     const double ybar = mean(y);
     std::vector<double> yc(n);
-    double sst = 0.0;
+    double sst = 0.0, sum_y2 = 0.0;
     for (std::size_t i = 0; i < n; ++i) {
         yc[i] = y[i] - ybar;
         sst += yc[i] * yc[i];
+        sum_y2 += y[i] * y[i];
     }
 
     // Sistema R g = z'yc con z = xc / c (diagonal de R = 1); eliminación gaussiana con pivoteo parcial.
@@ -118,7 +119,9 @@ inline OlsResult ols(const std::vector<std::vector<double>>& predictors, const s
     }
     out.dof = static_cast<int>(n - k - 1);
     out.sigma = std::sqrt(out.sse / out.dof);
-    out.r_squared = sst > 0.0 ? 1.0 - out.sse / sst : (out.sse == 0.0 ? 1.0 : 0.0);
+    // «y constante» se decide por la escala de y: la media de 0.1 no es exacta y deja un SST ~1e-33, no 0.
+    const double tiny = 1e-24 * sum_y2;
+    out.r_squared = sst <= tiny ? (out.sse <= tiny ? 1.0 : 0.0) : std::clamp(1.0 - out.sse / sst, 0.0, 1.0);
     return out;
 }
 
