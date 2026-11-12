@@ -91,6 +91,9 @@ def test_bindings_defaults_and_read_only():
 def test_domain_errors_are_value_errors():
     with pytest.raises(ValueError, match="parameter 'charge_exponent'"):
         att.make_site_law(att.Law.General, 500.0, 1.5)
+    for a in (0.0, -0.5):
+        with pytest.raises(ValueError, match="parameter 'charge_exponent'"):
+            att.make_site_law(att.Law.General, 500.0, 1.5, charge_exponent=a)
     with pytest.raises(ValueError, match="parameter 'ppv_mm_s'"):
         att.fit_site_law([100.0, 200.0, 400.0], [100.0] * 3, [5.0, 0.0, 1.0], att.Law.SquareRoot)
     with pytest.raises(ValueError, match="scaled-distance law"):

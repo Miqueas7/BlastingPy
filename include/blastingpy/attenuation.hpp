@@ -181,10 +181,15 @@ inline SiteLaw fit_site_law(const std::vector<double>& distance_m, const std::ve
         f.warnings.push_back(
             "attenuation exponent beta is not positive (PPV does not decrease with distance): "
             "this law must not be used for prediction");
+    // Con a ≤ 0 la inversa W = (v·D^β/K)^(1/a) divide entre cero o convierte el máximo en mínimo.
+    if (general && f.charge_exponent <= 0.0)
+        f.warnings.push_back(
+            "charge exponent a is not positive (PPV does not increase with charge): "
+            "this law must not be used for prediction");
     return f;
 }
 
-/// Ley dada por el usuario (sin ajuste). En General `charge_exponent` es obligatorio; en las otras se omite (NaN) o
+/// Ley dada por el usuario (sin ajuste). En General `charge_exponent` es obligatorio y > 0; en las otras se omite (NaN) o
 /// debe ser igual al exponente fijo de la ley.
 inline SiteLaw make_site_law(Law law, double k, double beta, double charge_exponent = validation::unset,
                              double sigma = 0.0, double z = 2.0) {
@@ -195,7 +200,7 @@ inline SiteLaw make_site_law(Law law, double k, double beta, double charge_expon
     v::require_non_negative(z, "z");
     if (law == Law::General) {
         v::require(!std::isnan(charge_exponent), "charge_exponent", "is required for Law.General", charge_exponent);
-        v::require_finite(charge_exponent, "charge_exponent");
+        v::require_positive(charge_exponent, "charge_exponent");
     } else {
         const double fixed = attenuation_detail::fixed_charge_exponent(law);
         if (std::isnan(charge_exponent)) charge_exponent = fixed;

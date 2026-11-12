@@ -113,7 +113,9 @@ TEST(FitSiteLaw, UpperBoundIsTwoSigmaByDefault) {
     EXPECT_DOUBLE_EQ(f.z, 2.0);
     EXPECT_NEAR(f.coverage, 0.977250, 1e-6);
     EXPECT_NEAR(f.k_upper, 1701.9, 0.5);  // 1000·10^(2·0.115470)
-    EXPECT_NEAR(std::fabs(f.residuals[0]), 0.1, 1e-12);
+    // residuo = log10(observada) − log10(mediana): el primer punto se armó con +0.1.
+    EXPECT_NEAR(f.residuals[0], 0.1, 1e-12);
+    EXPECT_NEAR(f.residuals[1], -0.1, 1e-12);
 
     const auto g = fit_site_law(ev.d, ev.w, ev.v, Law::SquareRoot, normal_quantile(0.95));
     EXPECT_NEAR(g.k_upper, 1548.6, 0.5);  // 1000·10^(1.6448536·0.115470)
@@ -168,6 +170,19 @@ TEST(FitSiteLaw, NonPositiveBetaIsAWarningNotAnError) {
     const auto f = fit_site_law(d, w, v, Law::SquareRoot);
     EXPECT_LT(f.beta, 0.0);
     EXPECT_TRUE(has(f.warnings, "not positive"));
+}
+
+TEST(FitSiteLaw, NonPositiveChargeExponentIsAWarningNotAnError) {
+    // Con a ≤ 0 la inversa W = (v·D^β/K)^(1/a) divide entre cero o vuelve mínimo el máximo.
+    const auto ev = grid(500.0, 1.5, -0.4, true);
+    const auto f = fit_site_law(ev.d, ev.w, ev.v, Law::General);
+    EXPECT_NEAR(f.charge_exponent, -0.4, 1e-9);
+    EXPECT_TRUE(has(f.warnings, "charge exponent a is not positive"));
+    EXPECT_TRUE(has(f.warnings, "must not be used for prediction"));
+
+    const auto ok = grid(500.0, 1.5, 0.7, true);
+    const auto g = fit_site_law(ok.d, ok.w, ok.v, Law::General);
+    EXPECT_FALSE(has(g.warnings, "charge exponent"));
 }
 
 TEST(FitSiteLaw, RejectsNonPositiveInputsByName) {
@@ -264,4 +279,10 @@ TEST(MakeSiteLaw, RejectsInvalidParameters) {
     EXPECT_THROW(make_site_law(Law::SquareRoot, 1000.0, 1.6, nan, 0.1, -1.0), std::invalid_argument);
     EXPECT_THROW(make_site_law(Law::SquareRoot, INFINITY, 1.6), std::invalid_argument);
     EXPECT_THROW(make_site_law(Law::General, 500.0, 1.5, INFINITY), std::invalid_argument);
+    EXPECT_EQ(error_of([] { make_site_law(Law::General, 500.0, 1.5, 0.0); })
+                  .rfind("Domain error [BlastingPy]: parameter 'charge_exponent'", 0),
+              0u);
+    EXPECT_EQ(error_of([] { make_site_law(Law::General, 500.0, 1.5, -0.5); })
+                  .rfind("Domain error [BlastingPy]: parameter 'charge_exponent'", 0),
+              0u);
 }
