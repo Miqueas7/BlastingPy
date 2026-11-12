@@ -1,11 +1,13 @@
-"""Extrae el texto de PDF de referencia a un .txt junto a cada PDF.
+"""Extract the text of reference PDFs to a .txt file next to each PDF.
 
-Uso: python tools/extraer_texto.py <pdf>... [--ocr]
+Usage: python tools/extraer_texto.py <pdf>... [--ocr]
 
-Las páginas se separan con «=== p. N ===» (N = página física del PDF, desde 1).
-Con --ocr, las páginas con menos de 200 caracteres de texto se renderizan a 300 ppp
-y pasan por Tesseract (inglés).
+Pages are separated by "=== p. N ===" (N = physical PDF page, from 1).
+With --ocr, pages with fewer than 200 characters of text are rendered at 300 dpi and
+run through Tesseract (English); the OCR text is appended after the native text.
 """
+
+
 
 import argparse
 import subprocess
@@ -37,7 +39,9 @@ def extract(pdf: Path, ocr: bool) -> tuple[Path, int]:
         for i, page in enumerate(doc, start=1):
             text = page.get_text()
             if ocr and len(text.strip()) < MIN_CHARS:
-                text, n_ocr = ocr_page(page), n_ocr + 1
+                # se conserva el texto nativo (puede traer un número suelto) y el OCR va después
+                text += f"--- OCR (Tesseract, eng) ---\n{ocr_page(page)}"
+                n_ocr += 1
             parts.append(f"=== p. {i} ===\n{text}")
     out = pdf.with_name(pdf.name + ".txt")
     out.write_text("\n".join(parts), encoding="utf-8")
@@ -46,12 +50,12 @@ def extract(pdf: Path, ocr: bool) -> tuple[Path, int]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("pdfs", nargs="+", type=Path)
-    ap.add_argument("--ocr", action="store_true", help="OCR para páginas sin texto")
+    ap.add_argument("pdfs", nargs="+", type=Path, help="PDF files to extract")
+    ap.add_argument("--ocr", action="store_true", help="also OCR pages with almost no text")
     args = ap.parse_args()
     for pdf in args.pdfs:
         out, n_ocr = extract(pdf, args.ocr)
-        print(f"{pdf.name}: {out.name} ({n_ocr} páginas con OCR)")
+        print(f"{pdf.name}: wrote {out.name} ({n_ocr} pages with OCR)")
     return 0
 
 
