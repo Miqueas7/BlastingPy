@@ -5,7 +5,9 @@
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
+#include "blastingpy/least_squares.hpp"
 #include "blastingpy/method_info.hpp"
 #include "blastingpy/units.hpp"
 
@@ -41,4 +43,15 @@ NB_MODULE(_blastingpy_core, m) {
     u.def("convert_k_to_si", &units::convert_k_to_si, nb::arg("k_imperial"), nb::arg("beta"),
           nb::arg("charge_exponent"),
           "Convert K of v[in/s] = K (D[ft]/W[lb]**e)**-beta to the K of v[mm/s] with D in m and W in kg.");
+
+    nb::module_ ls = m.def_submodule("_least_squares", "Ordinary least squares with 0, 1 or 2 predictors.");
+    nb::class_<OlsResult>(ls, "OlsResult", "Coefficients (intercept first), SSE, sigma, dof, R2 and residuals of a fit.")
+        .def_ro("coefficients", &OlsResult::coefficients)
+        .def_ro("sse", &OlsResult::sse)
+        .def_ro("sigma", &OlsResult::sigma)
+        .def_ro("dof", &OlsResult::dof)
+        .def_ro("r_squared", &OlsResult::r_squared)
+        .def_ro("residuals", &OlsResult::residuals);
+    ls.def("ols", &ols, nb::arg("predictors"), nb::arg("y"),
+           "Fit y = b0 + b1 x1 [+ b2 x2]; `predictors` is a list of 0, 1 or 2 columns.");
 }
