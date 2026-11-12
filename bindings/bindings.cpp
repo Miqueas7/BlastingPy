@@ -7,6 +7,7 @@
 #include <nanobind/stl/string.h>
 
 #include "blastingpy/method_info.hpp"
+#include "blastingpy/units.hpp"
 
 namespace nb = nanobind;
 using namespace blastingpy;
@@ -29,4 +30,15 @@ NB_MODULE(_blastingpy_core, m) {
         .def_ro("method_id", &MethodInfo::method_id)
         .def_ro("verification", &MethodInfo::verification)
         .def_ro("source", &MethodInfo::source);
+
+    // Submódulo privado (el `import *` del paquete no lo arrastra); la API pública es blastingpy.units.
+    nb::module_ u = m.def_submodule("_units", "Exact unit factors and scaled distance.");
+    u.attr("m_per_ft") = units::m_per_ft;
+    u.attr("kg_per_lb") = units::kg_per_lb;
+    u.attr("mm_per_in") = units::mm_per_in;
+    u.def("scaled_distance", &units::scaled_distance, nb::arg("distance_m"), nb::arg("charge_kg"),
+          nb::arg("charge_exponent"), "Scaled distance D / W**e (distance in m, charge in kg).");
+    u.def("convert_k_to_si", &units::convert_k_to_si, nb::arg("k_imperial"), nb::arg("beta"),
+          nb::arg("charge_exponent"),
+          "Convert K of v[in/s] = K (D[ft]/W[lb]**e)**-beta to the K of v[mm/s] with D in m and W in kg.");
 }

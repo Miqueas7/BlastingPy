@@ -84,6 +84,7 @@ if(BLASTINGPY_BUILD_TESTS)
     # Cada tarea agrega aquí su archivo de pruebas
     add_executable(blastingpy_tests
         tests/cpp/test_validation.cpp
+        tests/cpp/test_units.cpp
     )
     target_link_libraries(blastingpy_tests PRIVATE
         blastingpy_core
