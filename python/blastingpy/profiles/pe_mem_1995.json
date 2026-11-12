@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "profile_id": "PE-MEM-1995",
+  "name": {
+    "en": "Peruvian environmental guide for drilling and blasting in mining (1995)",
+    "es": "Guía ambiental peruana para perforación y voladura en minería (1995)"
+  },
+  "jurisdiction": "PE",
+  "force": "guide",
+  "source": {
+    "citation": "Ministerio de Energía y Minas, Dirección General de Asuntos Ambientales (1995). Guía Ambiental para la Perforación y Voladuras en Operaciones Mineras. Lima",
+    "edition": "September 1995",
+    "url": "https://cdn.www.gob.pe/uploads/document/file/5217278/Gu%C3%ADa%20Ambiental%20para%20la%20Perforaci%C3%B3n%20y%20Voladura%20en%20Operaciones%20Mineras.pdf"
+  },
+  "quantity": "component_max",
+  "quantity_basis": "Same note as 30 CFR 816.67: particle velocity is recorded in three perpendicular directions and the limit applies to each of the three.",
+  "frequency_methods": [],
+  "units": {"velocity": "in/s", "distance": "ft", "charge": "lb"},
+  "criteria": [
+    {
+      "id": "distance-table",
+      "kind": "distance_table",
+      "structure": {"en": "Structures near the blast (table copied from 30 CFR 816.67)", "es": "Estructuras cercanas a la voladura (cuadro tomado de 30 CFR 816.67)"},
+      "verification": "V1",
+      "reference": "Table 'Velocidad máxima partícula pico', p. 33 (PDF p. 23)",
+      "note": "Interpretation: a row applies to d <= d_max (the guide reads '0 a 300' and '301 a 5000' ft). W = (D/Ds)^2 is the charge in lb detonated in any 8 ms period, D in ft. A modified Ds must keep the predicted velocity within the table (pp. 33-34); unlike the federal rule, the guide does not state a 95 % confidence level.",
+      "rows": [
+        {"d_max": 300, "limit": 1.25, "scaled_distance": 50},
+        {"d_max": 5000, "limit": 1.00, "scaled_distance": 55},
+        {"d_max": null, "limit": 0.75, "scaled_distance": 65}
+      ]
+    }
+  ]
+}

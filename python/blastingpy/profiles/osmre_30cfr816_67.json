@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "profile_id": "OSMRE-30CFR816.67",
+  "name": {
+    "en": "US federal rule for ground vibration from surface coal mine blasting",
+    "es": "Regla federal de EE. UU. para la vibración del terreno por voladuras en minas de carbón a cielo abierto"
+  },
+  "jurisdiction": "US",
+  "force": "regulation",
+  "source": {
+    "citation": "30 CFR § 816.67 (Office of Surface Mining Reclamation and Enforcement)",
+    "edition": "Text as amended through 82 FR 54979 (17-Nov-2017); annual edition of 1-Jul-2023",
+    "url": "https://www.law.cornell.edu/cfr/text/30/816.67"
+  },
+  "quantity": "component_max",
+  "quantity_basis": "Note 1 of the table: particle velocity is recorded in three mutually perpendicular directions and the limit applies to each of the three.",
+  "frequency_methods": [],
+  "units": {"velocity": "in/s", "distance": "ft", "charge": "lb"},
+  "criteria": [
+    {
+      "id": "distance-table",
+      "kind": "distance_table",
+      "structure": {"en": "Structures near the blast", "es": "Estructuras cercanas a la voladura"},
+      "verification": "V1",
+      "reference": "30 CFR 816.67(d)(2)(i) table and (d)(3)(i); annual edition 1-Jul-2023, pp. 308-309",
+      "note": "Interpretation: a row applies to d <= d_max (the rule reads '0 to 300' and '301 to 5,000' ft and says nothing for distances between 300 and 301 ft). W = (D/Ds)^2 is the charge in lb detonated in any 8 ms period, D in ft ((d)(3)(i)). A modified Ds needs site seismograph records and must keep the limit at a 95-percent confidence level ((d)(3)(ii)). The Figure 1 alternative (limits by frequency) is not included: its ~11 Hz breakpoint is not labelled and the source does not say how its segments join.",
+      "rows": [
+        {"d_max": 300, "limit": 1.25, "scaled_distance": 50},
+        {"d_max": 5000, "limit": 1.00, "scaled_distance": 55},
+        {"d_max": null, "limit": 0.75, "scaled_distance": 65}
+      ]
+    }
+  ]
+}
