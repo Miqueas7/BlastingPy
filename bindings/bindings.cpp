@@ -92,4 +92,19 @@ NB_MODULE(_blastingpy_core, m) {
     at.def("make_site_law", &make_site_law, nb::arg("law"), nb::arg("k"), nb::arg("beta"),
            nb::arg("charge_exponent") = validation::unset, nb::arg("sigma") = 0.0, nb::arg("z") = 2.0,
            "User-defined site law (no fit); charge_exponent is required for Law.General.");
+
+    nb::enum_<Level>(at, "Level", "Which constant of the law a prediction uses.")
+        .value("Median", Level::Median, "k: the median of the fit")
+        .value("Upper", Level::Upper, "k_upper = k * 10**(z * sigma)");
+    nb::class_<Prediction>(at, "Prediction", "A value and the extrapolation warnings that came with it.")
+        .def_ro("value", &Prediction::value)
+        .def_ro("warnings", &Prediction::warnings);
+    at.def("predict_ppv", &predict_ppv, nb::arg("law"), nb::arg("distance_m"), nb::arg("charge_kg"),
+           nb::arg("level") = Level::Upper, "PPV (mm/s) at distance_m (m) with charge_kg (kg per delay).");
+    at.def("max_charge", &max_charge, nb::arg("law"), nb::arg("distance_m"), nb::arg("ppv_limit_mm_s"),
+           nb::arg("level") = Level::Upper,
+           "Maximum charge per delay (kg) at distance_m (m) that keeps the PPV at or below ppv_limit_mm_s.");
+    at.def("distance_for_ppv", &distance_for_ppv, nb::arg("law"), nb::arg("charge_kg"), nb::arg("ppv_limit_mm_s"),
+           nb::arg("level") = Level::Upper,
+           "Minimum distance (m) at which charge_kg per delay keeps the PPV at or below ppv_limit_mm_s.");
 }

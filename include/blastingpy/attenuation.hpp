@@ -31,6 +31,9 @@ namespace blastingpy {
 
 enum class Law { SquareRoot, CubeRoot, General };
 
+/// Nivel de la ley: Median usa k; Upper usa k_upper = k·10^(z·sigma).
+enum class Level { Median, Upper };
+
 struct SiteLaw {
     Law law;
     double k;                // mediana (K50), en mm/s-m-kg (o en las unidades de entrada)
@@ -78,7 +81,91 @@ inline MethodInfo law_info(Law law) {
 
 inline double coverage(double z) { return 0.5 * std::erfc(-z / std::sqrt(2.0)); }
 
+/// Una ley con beta <= 0 (o a <= 0 en General) puede existir como ajuste, pero no sirve para predecir: la carga máxima
+/// saldría infinita o invertida. Se rechaza aquí, antes de cualquier cálculo.
+inline void require_usable(const SiteLaw& f) {
+    namespace v = validation;
+    v::require(f.beta > 0.0, "beta", "is not positive, so this law must not be used for prediction", f.beta);
+    if (f.law == Law::General)
+        v::require(f.charge_exponent > 0.0, "charge_exponent",
+                   "is not positive, so this law must not be used for prediction", f.charge_exponent);
+}
+
+inline double level_k(const SiteLaw& f, Level level) { return level == Level::Upper ? f.k_upper : f.k; }
+
+/// Exponente p de W en v = K·W^p·D^(−β): e·β en las leyes de distancia escalada, a en General.
+inline double charge_power(const SiteLaw& f) {
+    return f.law == Law::General ? f.charge_exponent : f.charge_exponent * f.beta;
+}
+
+/// Un rango NaN (ley hecha con make_site_law) significa «sin rango que avisar».
+inline void warn_if_outside(std::vector<std::string>& warnings, const std::string& what, const std::string& unit,
+                            double value, double lo, double hi) {
+    if (std::isnan(lo) || std::isnan(hi) || (value >= lo && value <= hi)) return;
+    namespace d = validation::detail;
+    warnings.push_back(what + " " + d::num(value) + " " + unit + " is outside the fitted range [" + d::num(lo) + ", " +
+                       d::num(hi) + "] " + unit + ": extrapolation");
+}
+
+inline double finite_result(double value, const char* name) {
+    validation::require(std::isfinite(value) && value > 0.0, name,
+                        "gives a result outside the numeric range (not finite or underflows to 0)", value);
+    return value;
+}
+
 }  // namespace attenuation_detail
+
+/// Resultado de una predicción o inversa, con los avisos de extrapolación.
+struct Prediction {
+    double value;
+    std::vector<std::string> warnings;
+};
+
+/// PPV (mm/s) a `distance_m` con `charge_kg` por retardo; Upper usa k_upper, Median usa k.
+inline Prediction predict_ppv(const SiteLaw& law, double distance_m, double charge_kg, Level level = Level::Upper) {
+    namespace a = attenuation_detail;
+    validation::require_positive(distance_m, "distance_m");
+    validation::require_positive(charge_kg, "charge_kg");
+    a::require_usable(law);
+    Prediction r;
+    r.value = a::finite_result(a::level_k(law, level) * std::pow(charge_kg, a::charge_power(law)) *
+                                   std::pow(distance_m, -law.beta),
+                               "distance_m");
+    a::warn_if_outside(r.warnings, "distance", "m", distance_m, law.distance_min_m, law.distance_max_m);
+    a::warn_if_outside(r.warnings, "charge", "kg", charge_kg, law.charge_min_kg, law.charge_max_kg);
+    return r;
+}
+
+/// Carga máxima por retardo (kg) a `distance_m` para que la PPV no pase de `ppv_limit_mm_s`.
+inline Prediction max_charge(const SiteLaw& law, double distance_m, double ppv_limit_mm_s, Level level = Level::Upper) {
+    namespace a = attenuation_detail;
+    validation::require_positive(distance_m, "distance_m");
+    validation::require_positive(ppv_limit_mm_s, "ppv_limit_mm_s");
+    a::require_usable(law);
+    Prediction r;
+    r.value = a::finite_result(
+        std::pow(ppv_limit_mm_s * std::pow(distance_m, law.beta) / a::level_k(law, level), 1.0 / a::charge_power(law)),
+        "ppv_limit_mm_s");
+    a::warn_if_outside(r.warnings, "distance", "m", distance_m, law.distance_min_m, law.distance_max_m);
+    a::warn_if_outside(r.warnings, "computed charge", "kg", r.value, law.charge_min_kg, law.charge_max_kg);
+    return r;
+}
+
+/// Distancia mínima (m) a la que `charge_kg` por retardo no pasa de `ppv_limit_mm_s`.
+inline Prediction distance_for_ppv(const SiteLaw& law, double charge_kg, double ppv_limit_mm_s,
+                                   Level level = Level::Upper) {
+    namespace a = attenuation_detail;
+    validation::require_positive(charge_kg, "charge_kg");
+    validation::require_positive(ppv_limit_mm_s, "ppv_limit_mm_s");
+    a::require_usable(law);
+    Prediction r;
+    r.value = a::finite_result(
+        std::pow(a::level_k(law, level) * std::pow(charge_kg, a::charge_power(law)) / ppv_limit_mm_s, 1.0 / law.beta),
+        "ppv_limit_mm_s");
+    a::warn_if_outside(r.warnings, "charge", "kg", charge_kg, law.charge_min_kg, law.charge_max_kg);
+    a::warn_if_outside(r.warnings, "computed distance", "m", r.value, law.distance_min_m, law.distance_max_m);
+    return r;
+}
 
 /// Cuantil de la normal estándar, 0 < p < 1. normal_quantile(0.95) = 1.645 da la cota unilateral del 95 %.
 inline double normal_quantile(double p) {
