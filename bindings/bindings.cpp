@@ -7,6 +7,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include "blastingpy/attenuation.hpp"
 #include "blastingpy/least_squares.hpp"
 #include "blastingpy/method_info.hpp"
 #include "blastingpy/units.hpp"
@@ -54,4 +55,41 @@ NB_MODULE(_blastingpy_core, m) {
         .def_ro("residuals", &OlsResult::residuals);
     ls.def("ols", &ols, nb::arg("predictors"), nb::arg("y"),
            "Fit y = b0 + b1 x1 [+ b2 x2]; `predictors` is a list of 0, 1 or 2 columns.");
+
+    nb::module_ at = m.def_submodule("_attenuation", "Site attenuation law: fit and upper bound.");
+    nb::enum_<Law>(at, "Law", "Form of the site attenuation law.")
+        .value("SquareRoot", Law::SquareRoot, "v = K (D / W**0.5)**-beta")
+        .value("CubeRoot", Law::CubeRoot, "v = K (D / W**(1/3))**-beta")
+        .value("General", Law::General, "v = K W**a D**-beta");
+    nb::class_<SiteLaw>(at, "SiteLaw",
+                        "Fitted (or user-defined) site law: median K, beta, sigma in log10 and the upper bound "
+                        "k_upper = k * 10**(z * sigma).")
+        .def_ro("law", &SiteLaw::law)
+        .def_ro("k", &SiteLaw::k)
+        .def_ro("beta", &SiteLaw::beta)
+        .def_ro("charge_exponent", &SiteLaw::charge_exponent)
+        .def_ro("sigma", &SiteLaw::sigma)
+        .def_ro("n", &SiteLaw::n)
+        .def_ro("dof", &SiteLaw::dof)
+        .def_ro("r_squared", &SiteLaw::r_squared)
+        .def_ro("z", &SiteLaw::z)
+        .def_ro("coverage", &SiteLaw::coverage)
+        .def_ro("k_upper", &SiteLaw::k_upper)
+        .def_ro("convention", &SiteLaw::convention)
+        .def_ro("distance_min_m", &SiteLaw::distance_min_m)
+        .def_ro("distance_max_m", &SiteLaw::distance_max_m)
+        .def_ro("charge_min_kg", &SiteLaw::charge_min_kg)
+        .def_ro("charge_max_kg", &SiteLaw::charge_max_kg)
+        .def_ro("residuals", &SiteLaw::residuals)
+        .def_ro("outliers", &SiteLaw::outliers)
+        .def_ro("info", &SiteLaw::info)
+        .def_ro("warnings", &SiteLaw::warnings);
+    at.def("normal_quantile", &normal_quantile, nb::arg("p"),
+           "Standard normal quantile, 0 < p < 1 (normal_quantile(0.95) = 1.645).");
+    at.def("fit_site_law", &fit_site_law, nb::arg("distance_m"), nb::arg("charge_kg"), nb::arg("ppv_mm_s"),
+           nb::arg("law"), nb::arg("z") = 2.0, nb::arg("outlier_z") = 3.0,
+           "Fit the site law by least squares in log10; the upper bound is k * 10**(z * sigma).");
+    at.def("make_site_law", &make_site_law, nb::arg("law"), nb::arg("k"), nb::arg("beta"),
+           nb::arg("charge_exponent") = validation::unset, nb::arg("sigma") = 0.0, nb::arg("z") = 2.0,
+           "User-defined site law (no fit); charge_exponent is required for Law.General.");
 }

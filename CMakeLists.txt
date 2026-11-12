@@ -86,6 +86,7 @@ if(BLASTINGPY_BUILD_TESTS)
         tests/cpp/test_validation.cpp
         tests/cpp/test_units.cpp
         tests/cpp/test_least_squares.cpp
+        tests/cpp/test_attenuation_fit.cpp
     )
     target_link_libraries(blastingpy_tests PRIVATE
         blastingpy_core
