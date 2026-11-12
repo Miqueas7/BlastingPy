@@ -202,3 +202,54 @@ def test_xlsx_without_openpyxl(tmp_path, monkeypatch):
         read_events(p, columns=COLS, ppv_kind="vertical")
     with pytest.raises(ImportError, match=r"pip install blastingpy\[io\]"):
         write_events_template(tmp_path / "t.xlsx")
+
+
+def test_semicolon_file_uses_decimal_comma(tmp_path):
+    # En un archivo con ";" el punto es marca de miles (1.250 = 1250), no decimal: se rechaza en vez de leerlo como 1.25.
+    p = _csv(tmp_path, "Dist;Carga;PPV\n100;20;1,250\n")
+    assert read_events(p, columns=COLS, ppv_kind="vertical")["ppv_mm_s"].tolist() == [1.25]
+    for bad in ("1.250", "1.250,5"):
+        p = _csv(tmp_path, f"Dist;Carga;PPV\n100;20;{bad}\n", name="m.csv")
+        with pytest.raises(ValueError, match=r"column 'PPV' \(ppv_mm_s\), row 2.*decimal"):
+            read_events(p, columns=COLS, ppv_kind="vertical")
+    p = _csv(tmp_path, "Dist;Carga;PPV\n100;20;12.5\n", name="n.csv")
+    assert read_events(p, columns=COLS, ppv_kind="vertical", decimal=".")["ppv_mm_s"].tolist() == [12.5]
+    p = _csv(tmp_path, "Dist,Carga,PPV\n100,20,0.850\n", name="o.csv")  # con "," el punto sí es decimal
+    assert read_events(p, columns=COLS, ppv_kind="vertical")["ppv_mm_s"].tolist() == [0.85]
+
+
+@pytest.mark.parametrize("sep", [",", ";"])
+def test_rows_with_a_different_field_count_are_errors(tmp_path, sep):
+    longer = _csv(tmp_path, f"Dist{sep}Carga{sep}PPV\n10{sep}1{sep}1\n120{sep}5{sep}45{sep}3.2\n", name="long.csv")
+    with pytest.raises(ValueError, match=r"row 3.*4 fields.*header has 3.*sep"):
+        read_events(longer, columns=COLS, ppv_kind="vertical", decimal=".")
+    short = _csv(tmp_path, f"Dist{sep}Carga{sep}PPV\n10{sep}1{sep}1\n100{sep}20\n", name="short.csv")
+    with pytest.raises(ValueError, match=r"row 3.*2 fields.*header has 3"):
+        read_events(short, columns=COLS, ppv_kind="vertical")
+
+
+def test_quoted_fields_count_as_one_field(tmp_path):
+    p = _csv(tmp_path, 'Dist,Carga,PPV\n"120,5",45,3.2\n')
+    assert read_events(p, columns=COLS, ppv_kind="vertical")["distance_m"].tolist() == [120.5]
+
+
+def test_row_numbers_after_blank_empty_and_skipped_rows_csv(tmp_path):
+    p = _csv(tmp_path, "Dist;Carga;PPV\n100;20;2\n\n;;\n150;20;\n200;20;x\n")
+    with pytest.warns(UserWarning, match="1 row skipped"):
+        with pytest.raises(ValueError, match=r"column 'PPV' \(ppv_mm_s\), row 6"):
+            read_events(p, columns=COLS, ppv_kind="vertical")
+
+
+def test_row_numbers_after_empty_and_skipped_rows_xlsx(tmp_path):
+    p = _xlsx(tmp_path, [(100, 20, 2), (None, None, None), (150, 20, None), (200, 20, "x")])
+    with pytest.warns(UserWarning, match="1 row skipped"):
+        with pytest.raises(ValueError, match=r"column 'PPV' \(ppv_mm_s\), row 5"):
+            read_events(p, columns=COLS, ppv_kind="vertical")
+
+
+def test_dataframe_source_is_not_modified(tmp_path):
+    src = pd.DataFrame({"Dist": [100.0, 200.0], "Carga": [10.0, 20.0], "PPV": [1.0, 2.0]})
+    before = src.copy()
+    first = read_events(src, columns=COLS, units="imperial", ppv_kind="vertical")
+    assert src.equals(before)
+    assert read_events(src, columns=COLS, units="imperial", ppv_kind="vertical").equals(first)

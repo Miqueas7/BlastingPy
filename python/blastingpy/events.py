@@ -14,6 +14,7 @@ for a DataFrame source.
 
 from __future__ import annotations
 
+import csv
 import importlib.resources
 import io
 import os
@@ -102,22 +103,39 @@ def _decode(path) -> str:
         return data.decode("cp1252")  # "CSV (delimitado por comas)" de Excel en español
 
 
-def _load(source, sheet, sep) -> pd.DataFrame:
-    """Return the table as objects with the user's column names; row ``i`` is position ``i``."""
+def _read_csv(source, sep) -> tuple[pd.DataFrame, str]:
+    """Parse the CSV as text; every non-blank line must have as many fields as the header."""
+    text = _decode(source)
+    if sep is None:
+        header = text.splitlines()[0] if text.strip() else ""
+        sep = max((";", ",", "	"), key=header.count)
+    lines = list(csv.reader(io.StringIO(text), delimiter=sep))
+    names = lines[0] if lines else []
+    rows = []
+    for i, fields in enumerate(lines[1:]):
+        if not fields:  # línea en blanco: fila vacía, pero cuenta para la numeración
+            fields = [""] * len(names)
+        elif len(fields) != len(names):
+            raise ValueError(
+                f"{_PREFIX}: row {i + 2} has {len(fields)} fields but the header has {len(names)}. Check for an "
+                f"unquoted decimal comma in a comma-separated file, or pass sep= (detected: {sep!r})")
+        rows.append(fields)
+    return pd.DataFrame(rows, columns=names, dtype=object), sep
+
+
+def _load(source, sheet, sep) -> tuple[pd.DataFrame, str | None]:
+    """Return the table as objects with the user's column names (row ``i`` is position ``i``) and the CSV separator."""
     if isinstance(source, pd.DataFrame):
-        return source.reset_index(drop=True)
+        return source.reset_index(drop=True), None
     if not isinstance(source, (str, os.PathLike)):
         raise _param_error("source", f"must be a path to a .csv or .xlsx file or a DataFrame. Received: {source!r}")
     suffix = os.path.splitext(os.fspath(source))[1].lower()
     if suffix == ".csv":
-        text = _decode(source)
-        if sep is None:
-            header = text.splitlines()[0] if text.strip() else ""
-            sep = max((";", ",", "\t"), key=header.count)
-        return pd.read_csv(io.StringIO(text), sep=sep, dtype=str, keep_default_na=False, skip_blank_lines=False)
+        return _read_csv(source, sep)
     if suffix == ".xlsx":
         _require_openpyxl()
-        return pd.read_excel(source, sheet_name=0 if sheet is None else sheet, dtype=object, keep_default_na=False)
+        table = pd.read_excel(source, sheet_name=0 if sheet is None else sheet, dtype=object, keep_default_na=False)
+        return table, None
     raise _param_error("source", f"must be a .csv or .xlsx file. Received: {os.fspath(source)!r}")
 
 
@@ -151,12 +169,15 @@ def read_events(source, *, columns: dict[str, str], units: str | dict[str, str] 
     the file. ``units`` is ``"metric"`` (m, kg, mm/s), ``"imperial"`` (ft, lb, in/s) or a dict with any of the keys
     ``distance`` (``m``/``ft``), ``charge`` (``kg``/``lb``) and ``velocity`` (``mm/s``/``in/s``); missing keys are metric.
     ``ppv_kind`` applies to the whole table unless ``columns`` maps a ``ppv_kind`` column. ``sep`` (CSV, detected from the
-    header line when ``None``) and ``decimal`` (``","`` or ``"."``; both accepted when ``None``) override the detection.
+    header line when ``None``) and ``decimal`` (``","`` or ``"."``) override the detection. With ``None``, a ``;``
+    CSV uses the comma (a point is a thousands mark there and is rejected) and other sources accept both.
     Excel numbers stored as text are converted. See the module docstring for the row handling.
     """
     _check_arguments(columns, ppv_kind, decimal)
     unit_names = _unit_names(units)
-    table = _load(source, sheet, sep)
+    table, sep = _load(source, sheet, sep)
+    if sep == ";" and decimal is None:
+        decimal = ","  # con ";" el punto es marca de miles (1.250 = 1250): nunca se lee como decimal
     for canonical, name in columns.items():
         if name not in table.columns:
             raise _param_error("columns", f"maps {canonical!r} to {name!r}, which is not in the file. "
@@ -210,7 +231,8 @@ def read_events(source, *, columns: dict[str, str], units: str | dict[str, str] 
                     continue
                 number = _number(cells[canonical][i], decimal)
                 if number is None or not np.isfinite(number):
-                    raise cell_error(canonical, i, f"expected a number, received {cells[canonical][i]!r}")
+                    raise cell_error(canonical, i, f"expected a number, received {cells[canonical][i]!r}. "
+                                                f"If the decimal mark is not what you expect, pass decimal=',' or '.'")
                 if canonical in _REQUIRED and number <= 0:
                     raise cell_error(canonical, i, f"expected a positive value, received {cells[canonical][i]!r}")
                 values.append(number)
