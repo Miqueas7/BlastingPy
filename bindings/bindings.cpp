@@ -8,6 +8,7 @@
 #include <nanobind/stl/vector.h>
 
 #include "blastingpy/attenuation.hpp"
+#include "blastingpy/criteria_curve.hpp"
 #include "blastingpy/least_squares.hpp"
 #include "blastingpy/method_info.hpp"
 #include "blastingpy/units.hpp"
@@ -107,4 +108,27 @@ NB_MODULE(_blastingpy_core, m) {
     at.def("distance_for_ppv", &distance_for_ppv, nb::arg("law"), nb::arg("charge_kg"), nb::arg("ppv_limit_mm_s"),
            nb::arg("level") = Level::Upper,
            "Minimum distance (m) at which charge_kg per delay keeps the PPV at or below ppv_limit_mm_s.");
+
+    nb::module_ cc = m.def_submodule("_criteria_curve", "Piecewise PPV-frequency limit curves.");
+    nb::enum_<SegmentKind>(cc, "SegmentKind", "Shape of one segment of a limit curve.")
+        .value("ConstantVelocity", SegmentKind::ConstantVelocity, "v = v1")
+        .value("ConstantDisplacement", SegmentKind::ConstantDisplacement, "v = 2 pi f v1 (v1 is a displacement)")
+        .value("Linear", SegmentKind::Linear, "straight line between (f_min, v1) and (f_max, v2), linear axes")
+        .value("LogLog", SegmentKind::LogLog, "straight line between (f_min, v1) and (f_max, v2), log-log axes");
+    nb::class_<Segment>(cc, "Segment", "One segment of a limit curve, covering [f_min, f_max) in Hz.")
+        .def(nb::init<SegmentKind, double, double, double, double>(), nb::arg("kind"), nb::arg("f_min"),
+             nb::arg("f_max"), nb::arg("v1"), nb::arg("v2") = validation::unset)
+        .def_ro("kind", &Segment::kind)
+        .def_ro("f_min", &Segment::f_min)
+        .def_ro("f_max", &Segment::f_max)
+        .def_ro("v1", &Segment::v1)
+        .def_ro("v2", &Segment::v2);
+    nb::class_<CurveLimit>(cc, "CurveLimit", "Limit at a frequency; `segment` is the 0-based index (-1 if undefined).")
+        .def_ro("defined", &CurveLimit::defined)
+        .def_ro("limit", &CurveLimit::limit)
+        .def_ro("segment", &CurveLimit::segment);
+    cc.def("limit_at", &limit_at, nb::arg("segments"), nb::arg("frequency_hz"),
+           "Limit of the curve at frequency_hz (Hz), in the units of the segments; undefined outside the curve.");
+    cc.def("intersection_frequency", &intersection_frequency, nb::arg("velocity"), nb::arg("displacement"),
+           "Frequency (Hz) where constant velocity and constant displacement meet: velocity / (2 pi displacement).");
 }
