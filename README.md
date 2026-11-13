@@ -61,9 +61,9 @@ A complete, runnable version with synthetic data is in [examples/02-waveform-to-
 |---|---|---|
 | `read_instantel_ascii`, minimal (`Tran Vert Long MicL` and rows) | `real-file` | No metadata: pass `sample_rate_hz` (and `pretrigger_s`). |
 | `read_instantel_ascii`, THOR | `third-party-parser` | **Not validated against a real file**: built from a third-party parser's description. |
-| `read_instantel_ascii`, Blastware with header (table or blocks) | `manual-only` | **Not validated against a real file**: built from the manual; the record carries a warning. |
+| `read_instantel_ascii`, Blastware with header (table or blocks) | `manual-only` | **Not validated against a real file**: built from the manual; the record carries a warning. Only the default separators: header in double quotes, block values separated by commas. Header units are a hint: `units=` wins, with a warning. |
 | `read_instantel_histogram` | `manual-only` | **Not validated against a real file**: built from the manual; returns a DataFrame with a warning in `attrs`. |
-| `read_waveform_csv` | `user` | Any mark or renamed channels (`columns=`, `sep="\t"`); scientific notation accepted. |
+| `read_waveform_csv` | `user` | Any mark or renamed channels (`columns=`, `units=`, `sep="\t"`); scientific notation accepted. |
 | `read_obspy` (extra `seismic`) | `user` | miniSEED, SAC and other formats ObsPy reads. |
 
 A real export of each unvalidated format would settle it. Meanwhile, check the first record you read against what your
@@ -73,7 +73,8 @@ seismograph's own software shows.
   error. `read_waveform_csv` with a time column fits the rate by least squares and refuses a non-uniform column.
 - **Units.** Inside everything is SI (mm/s, Pa, s). Units are inferred from the resolution only for the Micromate and
   Minimate Pro steps (0.00788 mm/s, 0.0156 Pa), with a warning; otherwise pass `units=`.
-- **Renamed channels** are not recognized by the Instantel readers: use `read_waveform_csv(..., columns=..., sep="\t")`.
+- **Renamed channels** are not recognized by the Instantel readers: use
+  `read_waveform_csv(..., columns=..., units=..., sep="\t")` (`units=` is required there).
 - **Zero-crossing frequency.** `analyze(zc_method="interpolated")` (default) interpolates the crossings; `"instantel"`
   counts whole samples and flags a frequency above 100 fs / 1024 Hz. The frequency is NaN when the record edge cuts the
   half cycle of the peak or, with `"instantel"`, above that limit. The verdict is then `not_comparable` against a

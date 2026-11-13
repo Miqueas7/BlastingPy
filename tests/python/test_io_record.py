@@ -1,5 +1,8 @@
+import copy
 import dataclasses
+import pickle
 from datetime import datetime
+from types import MappingProxyType
 
 import numpy as np
 import pytest
@@ -97,7 +100,8 @@ def test_infer_units_all_zero_or_no_match():
 
 
 def test_from_arrays_without_units_infers_and_warns():
-    r = from_arrays({"Tran": _wave(STEP_G), "MicL": _wave(STEP_M)}, FS, pretrigger_s=0.25)
+    # 16 muestras a 1024 Hz duran 0.0156 s: un pretrigger más corto no suma el aviso de pretrigger largo
+    r = from_arrays({"Tran": _wave(STEP_G), "MicL": _wave(STEP_M)}, FS, pretrigger_s=0.01)
     assert len(r.warnings) == 2
     with pytest.raises(ValueError, match="units="):
         from_arrays({"Tran": np.array([0.0, 0.5, 1.0])}, FS)
@@ -204,6 +208,39 @@ def test_metadata_and_start():
         r.metadata["x"] = "y"
     with pytest.raises(ValueError, match="start"):
         from_arrays({"Tran": np.arange(8.0)}, FS, units=G, start="2026-01-01")
+
+
+def test_pretrigger_not_shorter_than_the_record_warns():
+    x = np.arange(8.0)  # 8 muestras a 4 Hz: 2 s de registro
+    for pre in (2.0, 3.5):
+        r = from_arrays({"Tran": x}, 4.0, units=G, pretrigger_s=pre)
+        assert sum("pretrigger_s" in w and "record" in w for w in r.warnings) == 1
+    r = from_arrays({"Tran": x}, 4.0, units=G, pretrigger_s=1.75)
+    assert r.warnings == ()
+
+
+def _same_record(a, b):
+    assert type(b) is Record
+    assert list(b.channels) == list(a.channels)
+    for name, data in a.channels.items():
+        np.testing.assert_array_equal(b.channels[name], data)
+        assert not b.channels[name].flags.writeable
+    for f in ("sample_rate_hz", "pretrigger_s", "start", "source", "format_evidence", "warnings"):
+        assert getattr(b, f) == getattr(a, f)
+    assert dict(b.metadata) == dict(a.metadata)
+    assert isinstance(b.channels, MappingProxyType) and isinstance(b.metadata, MappingProxyType)
+    with pytest.raises(TypeError):
+        b.channels["vertical"] = np.zeros(4)
+    with pytest.raises(TypeError):
+        b.metadata["x"] = "y"
+
+
+def test_record_pickles_and_deep_copies():
+    r = from_arrays({"Tran": _wave(STEP_G), "MicL": _wave(STEP_M)}, FS, units={"geophone": "in/s"},
+                    pretrigger_s=0.25, start=datetime(2026, 1, 2, 3, 4, 5), metadata={"unit": "A"})
+    assert r.warnings  # la unidad del micrófono se infirió: hay avisos que copiar
+    _same_record(r, pickle.loads(pickle.dumps(r)))
+    _same_record(r, copy.deepcopy(r))
 
 
 def test_make_record_caller_warnings_first_and_vocab():

@@ -63,9 +63,9 @@ Una versión completa y ejecutable con datos sintéticos está en [examples/02-w
 |---|---|---|
 | `read_instantel_ascii`, mínimo (`Tran Vert Long MicL` y filas) | `real-file` | Sin metadatos: pasa `sample_rate_hz` (y `pretrigger_s`). |
 | `read_instantel_ascii`, THOR | `third-party-parser` | **No validado contra un archivo real**: construido desde la descripción de un lector de terceros. |
-| `read_instantel_ascii`, Blastware con encabezado (tabla o bloques) | `manual-only` | **No validado contra un archivo real**: construido desde el manual; el registro lleva un aviso. |
+| `read_instantel_ascii`, Blastware con encabezado (tabla o bloques) | `manual-only` | **No validado contra un archivo real**: construido desde el manual; el registro lleva un aviso. Solo los separadores por omisión: encabezado entre comillas dobles y valores de los bloques separados por comas. Las unidades del encabezado son una pista: manda `units=`, con un aviso. |
 | `read_instantel_histogram` | `manual-only` | **No validado contra un archivo real**: construido desde el manual; devuelve un DataFrame con un aviso en `attrs`. |
-| `read_waveform_csv` | `user` | Cualquier marca o canales renombrados (`columns=`, `sep="\t"`); acepta notación científica. |
+| `read_waveform_csv` | `user` | Cualquier marca o canales renombrados (`columns=`, `units=`, `sep="\t"`); acepta notación científica. |
 | `read_obspy` (extra `seismic`) | `user` | miniSEED, SAC y otros formatos que lee ObsPy. |
 
 Un export real de cada formato no validado lo resolvería. Mientras tanto, contrasta el primer registro que leas con lo
@@ -76,7 +76,8 @@ que muestra el software de tu sismógrafo.
   uniforme.
 - **Unidades.** Por dentro todo es SI (mm/s, Pa, s). Las unidades se infieren de la resolución solo para los escalones
   del Micromate y el Minimate Pro (0,00788 mm/s, 0,0156 Pa), con un aviso; en otro caso pasa `units=`.
-- **Canales renombrados:** los lectores de Instantel no los reconocen; usa `read_waveform_csv(..., columns=..., sep="\t")`.
+- **Canales renombrados:** los lectores de Instantel no los reconocen; usa
+  `read_waveform_csv(..., columns=..., units=..., sep="\t")` (ahí `units=` es obligatorio).
 - **Frecuencia por cruce por cero.** `analyze(zc_method="interpolated")` (por omisión) interpola los cruces;
   `"instantel"` cuenta muestras enteras y marca una frecuencia sobre 100 fs / 1024 Hz. La frecuencia es NaN cuando el
   borde del registro corta el medio ciclo del pico o, con `"instantel"`, sobre ese tope. El veredicto es entonces

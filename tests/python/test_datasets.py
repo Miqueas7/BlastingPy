@@ -73,6 +73,17 @@ def test_record_exact_ppv_per_geophone_even_with_noise():
     assert np.abs(r.channels["mic"]).max() == pytest.approx(30.0, rel=1e-12)
 
 
+def test_record_noise_is_in_mm_s_on_the_geophones_only():
+    # R19: el ruido (mm/s) se suma a los geófonos ya escalados; el pretrigger (sin señal) muestra su desviación.
+    kw = dict(seed=5, sample_rate_hz=4096.0, duration_s=1.0, pretrigger_s=0.5, ppv_mm_s=10.0, mic_pa=30.0)
+    clean, noisy = synthetic_record(**kw), synthetic_record(noise_mm_s=0.05, **kw)
+    before = noisy.time_s() < 0
+    for ch in GEO:
+        assert np.abs(noisy.channels[ch]).max() == pytest.approx(10.0, rel=1e-12)
+        assert np.std(noisy.channels[ch][before]) == pytest.approx(0.05, rel=0.1)
+    np.testing.assert_array_equal(noisy.channels["mic"], clean.channels["mic"])
+
+
 def test_record_without_mic():
     assert "mic" not in synthetic_record(mic_pa=None).channels
 

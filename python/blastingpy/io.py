@@ -16,13 +16,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from datetime import time as dt_time
-from pathlib import Path
 from types import MappingProxyType
 
 import numpy as np
 import pandas as pd
 
-from .events import _AMBIGUOUS, _NUMBER, _number, _param_error, _read_csv
+from .events import _AMBIGUOUS, _NUMBER, _decode, _number, _param_error, _read_csv
 
 CHANNEL_NAMES = ("transverse", "vertical", "longitudinal", "mic")
 SOURCES = ("arrays", "instantel-thor", "instantel-blastware-table", "instantel-blastware-blocks",
@@ -165,8 +164,11 @@ class Record:
     """One seismograph record, immutable, in SI units.
 
     ``channels`` maps canonical names to read-only arrays (geophones in mm/s, ``"mic"`` in Pa).
-    ``source`` and ``format_evidence`` say how the record was built and how far the format is
-    validated; ``warnings`` collects everything the builder had to assume.
+    ``start`` is the start of the record as given by the source: the event (trigger) time for
+    Instantel exports, the first sample's time for ObsPy, whatever the caller passed for arrays,
+    and None when the source gives none. ``source`` and ``format_evidence`` say how the record was
+    built and how far the format is validated; ``warnings`` collects everything the builder had to
+    assume. A record can be pickled and deep-copied; the copy is frozen and read-only as well.
     """
 
     channels: Mapping[str, np.ndarray]
@@ -178,6 +180,11 @@ class Record:
     format_evidence: str
     warnings: tuple[str, ...]
 
+    def __reduce__(self):
+        # MappingProxyType no se serializa: se guarda como dict y se vuelve a congelar al reconstruir.
+        return (_rebuild_record, (dict(self.channels), self.sample_rate_hz, self.pretrigger_s, self.start,
+                                  dict(self.metadata), self.source, self.format_evidence, self.warnings))
+
     @property
     def n_samples(self) -> int:
         return int(next(iter(self.channels.values())).size)
@@ -186,6 +193,19 @@ class Record:
         """Time axis in seconds: ``i / fs - pretrigger`` (``i / fs`` without pretrigger)."""
         t = np.arange(self.n_samples) / self.sample_rate_hz
         return t - self.pretrigger_s if self.pretrigger_s is not None else t
+
+
+def _rebuild_record(channels, sample_rate_hz, pretrigger_s, start, metadata, source, format_evidence,
+                    warnings) -> Record:
+    """Inverse of ``Record.__reduce__``: freeze the plain dicts again, with read-only array copies."""
+    frozen = {}
+    for name, data in channels.items():
+        arr = np.array(data, dtype=float)
+        arr.flags.writeable = False
+        frozen[name] = arr
+    return Record(channels=MappingProxyType(frozen), sample_rate_hz=sample_rate_hz, pretrigger_s=pretrigger_s,
+                  start=start, metadata=MappingProxyType(dict(metadata)), source=source,
+                  format_evidence=format_evidence, warnings=tuple(warnings))
 
 
 def _make_record(channels, sample_rate_hz, *, units, pretrigger_s, start, metadata, source,
@@ -240,8 +260,12 @@ def _make_record(channels, sample_rate_hz, *, units, pretrigger_s, start, metada
         data.flags.writeable = False
         out[name] = data
 
+    n = next(iter(out.values())).size
     if pretrigger_s is None:
         warns.append("no pretrigger given: time starts at 0")
+    elif pretrigger_s >= n / sample_rate_hz:
+        warns.append(f"pretrigger_s = {pretrigger_s:g} s is not shorter than the record ({n} samples / "
+                     f"{sample_rate_hz:g} Hz = {n / sample_rate_hz:g} s): every sample is before the trigger")
     return Record(channels=MappingProxyType(out), sample_rate_hz=float(sample_rate_hz),
                   pretrigger_s=None if pretrigger_s is None else float(pretrigger_s), start=start,
                   metadata=MappingProxyType(meta), source=source, format_evidence=format_evidence,
@@ -270,14 +294,10 @@ def _read_lines(path, strip: bool = True) -> list[tuple[int, str]]:
     """Non-empty lines of a text file as ``(1-based line number, text)``; BOM and CRLF accepted.
 
     With ``strip=False`` the text keeps its leading and trailing blanks (a leading tab is an empty first field).
+    Lines end only at ``\\n`` (a trailing ``\\r`` is dropped), so U+0085 or U+2028 inside a line never splits it.
     """
-    raw = Path(path).read_bytes()
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = raw.decode("latin-1")
-    return [(i, line.strip() if strip else line) for i, line in enumerate(text.splitlines(), start=1)
-            if line.strip()]
+    lines = (line[:-1] if line.endswith("\r") else line for line in _decode(path).split("\n"))
+    return [(i, line.strip() if strip else line) for i, line in enumerate(lines, start=1) if line.strip()]
 
 
 def _guess_sep(line: str) -> str | None:
@@ -310,15 +330,17 @@ def _looks_numeric(text: str) -> bool:
 
 
 def _parse_number(text: str, decimal: str, lineno: int) -> float:
-    if decimal == ",":
-        text = text.replace(",", ".")
-    elif "," in text:
+    """A data value, checked against the number patterns of ``events`` (scientific notation accepted).
+
+    With ``decimal=","`` a point-decimal number is accepted too (ruling R11).
+    """
+    if decimal == "." and "," in text:
         raise _param_error("decimal", f"is '.' but line {lineno} has a comma inside the number '{text}'; "
                            "if the file uses a decimal comma, pass decimal=\",\"")
-    try:
-        return float(text)
-    except ValueError:
-        raise _param_error("path", f"has a value that is not a number at line {lineno}: '{text}'") from None
+    number = _number(text, None if decimal == "," else ".", scientific=True)
+    if number is None or not math.isfinite(number):
+        raise _param_error("path", f"has a value that is not a finite number at line {lineno}: '{text}'")
+    return number
 
 
 def _parse_table(rows, n_fields: int, sep: str | None, decimal: str) -> list[np.ndarray]:
@@ -339,15 +361,19 @@ def _parse_table(rows, n_fields: int, sep: str | None, decimal: str) -> list[np.
 # Formatos y evidencia: docs/investigacion/FUENTES_SPRINT2.md, «Formatos de exportación» (A, B, C).
 
 # Solo claves propias de THOR (README) cuentan para detectarlo: las genéricas (fs, unidades, fecha, hora) también
-# pueden venir en un encabezado de Blastware. Las genéricas igual se leen en un archivo THOR.
-_THOR_SPECIFIC_KEYS = frozenset({"eventtype", "pretriggerlength", "recordstopmode", "autostoptime", "geotriggerlevel",
-                                 "mictriggerlevel", "mictriggerleveldb", "georange", "micrange"})
+# pueden venir en un encabezado de Blastware. Las genéricas igual se leen en un archivo THOR. Con comillas, la clave
+# tiene que estar escrita como en el README (sin quitar espacios ni guiones): «Geo Range» es de Blastware (R17).
+_THOR_README_KEYS = ("EventType", "Pre-triggerLength", "RecordStopMode", "AutoStopTime", "GeoTriggerLevel",
+                     "MicTriggerLevel", "MicTriggerLeveldB", "GeoRange", "MicRange")
+_THOR_LITERAL_KEYS = frozenset(k.lower() for k in _THOR_README_KEYS)
+_THOR_SPECIFIC_KEYS = frozenset(re.sub(r"[\s\-_]", "", k).lower() for k in _THOR_README_KEYS)
 _KEY_VALUE = re.compile(r'^"?\s*([^":]+?)\s*:\s*(.*?)\s*"?$')
 # El número completo (con coma o punto) y sin dígitos pegados a la izquierda: «1,024 sps» no se lee como 24.
 _SPS = re.compile(r"(?<![\d.,])(\d+(?:[.,]\d+)?)\s*sps\b", re.IGNORECASE)
 _SEC = re.compile(r"(?<![\d.,])(\d+(?:[.,]\d+)?)\s*sec\b", re.IGNORECASE)
 _GEO_UNIT = re.compile(r"(?<![a-z/])(mm/s|in/s)(?![a-z/])", re.IGNORECASE)
 _MIC_UNIT = re.compile(r"(?<![a-z/])(pa|psi|db)(?![a-z/])", re.IGNORECASE)
+_NOT_UNIT_LINE = re.compile(r"trigger|level|range", re.IGNORECASE)
 _TIME = re.compile(r"^(\d{1,2}):(\d{2}):(\d{2})(?::(\d{1,3}))?(?::(\d{1,3}))?\s*([AP]M)?$", re.IGNORECASE)
 _DEFAULT_BLOCK_ORDER = ("Tran", "Vert", "Long", "MicL")
 _RENAMED_HINT = ("; if the channels were renamed, read the file with "
@@ -363,7 +389,8 @@ class _Parsed:
     source: str
     format_evidence: str
     sample_rate_hz: float | None = None
-    units: dict[str, str] = field(default_factory=dict)
+    units: dict[str, str] = field(default_factory=dict)  # declaradas por el archivo (THOR): chocan con units=
+    unit_hints: dict[str, str] = field(default_factory=dict)  # sugeridas (Blastware): units= manda, con aviso
     pretrigger_s: float | None = None
     start: datetime | None = None
     metadata: dict[str, str] = field(default_factory=dict)
@@ -379,15 +406,39 @@ def _is_channel_token(token: str) -> bool:
     return key in _ALIASES or key in _A_WEIGHTED or key in _SECOND_SENSOR
 
 
+def _quoted_header_end(lines) -> int:
+    """Index of the first line that is not a double-quoted header line."""
+    k = 0
+    while k < len(lines) and lines[k][1].startswith('"'):
+        k += 1
+    return k
+
+
+def _has_blocks_body(lines) -> bool:
+    """True when the first line after the quoted header is a comma-separated list of numbers (no row of names)."""
+    k = _quoted_header_end(lines)
+    return k < len(lines) and all(_looks_numeric(f) for f in _split_fields(lines[k][1], ","))
+
+
 def _is_thor(lines) -> bool:
+    """THOR detection, ruling R17: marker; else README keys spelled literally, or unquoted keys normalized.
+
+    Without the marker, a blocks body (one comma-separated line per channel) is always Blastware.
+    """
     if any("waveform data" in " ".join(s.lower().split()) for _, s in lines):
         return True
-    keys = set()
+    if _has_blocks_body(lines):
+        return False
+    literal, unquoted = set(), set()
     for _, s in lines:
         m = _KEY_VALUE.match(s)
-        if m and _normalize_key(m.group(1)) in _THOR_SPECIFIC_KEYS:
-            keys.add(_normalize_key(m.group(1)))
-    return len(keys) >= 2
+        if m is None:
+            continue
+        if m.group(1).lower() in _THOR_LITERAL_KEYS:
+            literal.add(m.group(1).lower())
+        if not s.startswith('"') and _normalize_key(m.group(1)) in _THOR_SPECIFIC_KEYS:
+            unquoted.add(_normalize_key(m.group(1)))
+    return len(literal) >= 2 or len(unquoted) >= 2
 
 
 def _thor_units(text: str, warns: list[str]) -> dict[str, str]:
@@ -514,9 +565,7 @@ def _header_unit(regex, kind: str, texts: list[str], warns: list[str]) -> str | 
 
 def _parse_blastware(lines, decimal) -> _Parsed:
     warns = [_BLASTWARE_WARNING]
-    k = 0
-    while k < len(lines) and lines[k][1].startswith('"'):
-        k += 1
+    k = _quoted_header_end(lines)
     texts = [s.strip('"').strip() for _, s in lines[:k]]
     body = lines[k:]
     if not body:
@@ -526,11 +575,13 @@ def _parse_blastware(lines, decimal) -> _Parsed:
                                                 for m in _SPS.findall(t)) if r is not None})
     if len(rates) > 1:
         warns.append(f"header names two sample rates ({', '.join(f'{r:g}' for r in rates)} sps): ignored")
-    units = {}
+    # Unidades: solo una pista (R18). Las líneas de disparo y rango nombran unidades de otra cosa («120 dB(L)»).
+    unit_texts = [t for t in texts if not _NOT_UNIT_LINE.search(t)]
+    hints = {}
     for kind, regex in (("geophone", _GEO_UNIT), ("mic", _MIC_UNIT)):
-        unit = _header_unit(regex, kind, texts, warns)
+        unit = _header_unit(regex, kind, unit_texts, warns)
         if unit is not None:
-            units[kind] = unit
+            hints[kind] = unit
 
     first = body[0][1]
     sep = _guess_sep(first)
@@ -553,7 +604,7 @@ def _parse_blastware(lines, decimal) -> _Parsed:
                    for lineno, s in body]
 
     return _Parsed(names, columns, source, "manual-only", sample_rate_hz=rates[0] if len(rates) == 1 else None,
-                   units=units, metadata={f"header_{j}": t for j, t in enumerate(texts, start=1)},
+                   unit_hints=hints, metadata={f"header_{j}": t for j, t in enumerate(texts, start=1)},
                    warnings=warns)
 
 
@@ -598,21 +649,31 @@ def read_instantel_ascii(path, *, sample_rate_hz: float | None = None, units: Ma
     Three layouts are detected, in this order:
 
     * **THOR** (``"Key : Value"`` header lines, quotes optional, then ``Waveform Data Channels``,
-      a row of channel names and one row per sample). Sample rate, units, pretrigger and start
-      come from the header; the whole header goes to ``metadata``. ``format_evidence`` is
-      ``"third-party-parser"``: built from a third-party parser's description, not validated against
-      a real file.
+      a row of channel names and one row per sample). Detected by a ``Waveform Data`` line; without
+      it, by two THOR-only keys (``EventType``, ``Pre-triggerLength``, ``GeoRange``...) spelled as in
+      THOR on any header line, or with other spacing on unquoted lines; a quoted ``Geo Range: ...``
+      is Blastware, and so is a blocks body. Sample rate, units, pretrigger and start (the event
+      time, ``EventDate`` + ``EventTime``) come from the header; the whole header goes to
+      ``metadata``. ``format_evidence`` is ``"third-party-parser"``: built from a third-party
+      parser's description, not validated against a real file.
     * **Blastware with header** (double-quoted text lines), followed by a row of channel names and
       a table (tab, comma or spaces), or by one comma-separated line per channel (blocks). The
-      sample rate and units are searched in the header. Built from the manual only, not validated
-      against a real file: ``format_evidence`` is ``"manual-only"``.
+      sample rate is searched in the header; the units found there (not on trigger, level or range
+      lines) are only a hint: an explicit ``units=`` wins, with a warning if they differ. Only the
+      default separators are read: double quotes around the header and commas between block values
+      (other String Delimiter or separator settings are not supported). ``start`` is None. Built
+      from the manual only, not validated against a real file: ``format_evidence`` is
+      ``"manual-only"``.
     * **Minimal**: a row of channel names (``Tran``, ``Vert``, ``Long``, ``MicL``) and one row per
-      sample, with no metadata. ``format_evidence`` is ``"real-file"``.
+      sample, with no metadata (``start`` is None). ``format_evidence`` is ``"real-file"``.
 
     ``sample_rate_hz``, ``units`` and ``pretrigger_s`` fill only what the file lacks; if both give
-    a value and they differ, ``ValueError`` shows the two. The sample rate is never guessed.
-    The decimal mark is a point; pass ``decimal=","`` for a decimal comma (not allowed when the
-    fields are comma-separated). Renamed channels are not recognized: use ``read_waveform_csv``.
+    a value and they differ, ``ValueError`` shows the two (Blastware units excepted, see above). The
+    sample rate is never guessed. The decimal mark is a point; pass ``decimal=","`` for a decimal
+    comma (not allowed when the fields are comma-separated; point-decimal values are still read).
+    Values follow the number patterns of ``read_events`` plus scientific notation; anything else
+    (``nan``, ``1_0``, ``+.5``) is a ``ValueError`` with its line. Renamed channels are not
+    recognized: use ``read_waveform_csv``.
     """
     _check_decimal(decimal, None)  # valor inválido: error antes de abrir el archivo
     lines = _read_lines(path)
@@ -631,6 +692,12 @@ def read_instantel_ascii(path, *, sample_rate_hz: float | None = None, units: Ma
                            "pass sample_rate_hz=")
     pre = _merge_value("pretrigger_s", parsed.pretrigger_s, pretrigger_s, "s")
     unit_map = _merge_units(parsed.units, units)
+    for kind, hint in parsed.unit_hints.items():  # Blastware: el encabezado sugiere, units= manda (R18)
+        if kind not in unit_map:
+            unit_map[kind] = hint
+        elif unit_map[kind] != hint:
+            parsed.warnings.append(f"the header suggests {kind} unit '{hint}' but units= gives '{units[kind]}': "
+                                   "the argument is used")
     if len(set(parsed.names)) != len(parsed.names):
         raise _param_error("channels", f"has a repeated channel name in {parsed.names}")
 
@@ -661,8 +728,8 @@ def read_obspy(path, *, channels: Mapping[str, str], units: Mapping[str, str],
     conversion to SI; without it the samples are taken as already in ``units``.
 
     All selected traces must share the sample rate (relative 1e-9), the start time (within half a
-    sample period) and the length. ``Record.start`` is the start of the first selected trace, as a
-    naive ``datetime`` in UTC. ``format_evidence`` is ``"user"``: the calibration is the caller's.
+    sample period) and the length. ``Record.start`` is the first sample's time of the first selected
+    trace (not the trigger time), as a naive ``datetime`` in UTC. ``format_evidence`` is ``"user"``: the calibration is the caller's.
     """
     try:
         import obspy
@@ -674,7 +741,8 @@ def read_obspy(path, *, channels: Mapping[str, str], units: Mapping[str, str],
     for key, value in sens.items():
         if key not in channels:
             raise _param_error("counts_per_unit", f"has key '{key}' that is not in channels")
-        if isinstance(value, bool) or not isinstance(value, (int, float, np.number))                 or not math.isfinite(value) or value <= 0:
+        if isinstance(value, bool) or not isinstance(value, (int, float, np.number)) \
+                or not math.isfinite(value) or value <= 0:
             raise _param_error("counts_per_unit", f"must be finite numbers > 0; got {value!r} for '{key}'")
 
     stream = obspy.read(str(path))

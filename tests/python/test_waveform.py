@@ -1,5 +1,9 @@
+import copy
 import math
+import pickle
+import warnings
 from datetime import datetime
+from types import MappingProxyType
 
 import numpy as np
 import pandas as pd
@@ -9,7 +13,7 @@ import blastingpy
 from blastingpy import attenuation, criteria, waveform
 from blastingpy._blastingpy_core import _waveform as core
 from blastingpy.events import _ORDER, read_events
-from blastingpy.io import from_arrays
+from blastingpy.io import _make_record, from_arrays
 
 FS = 1024.0
 N = 2048
@@ -270,6 +274,42 @@ def test_events_from_records_needs_one_item_per_record():
         waveform.events_from_records(records, distance_m=distances, charge_kg=[100.0] * 6, point=["P1"])
 
 
+def test_events_from_records_keeps_warnings_and_evidence_and_warns_once():
+    records, distances = _site_records()
+    records = records[:3]
+    records[0] = _record(pretrigger_s=None)
+    records[2] = _make_record(_channels(), FS, units=GM, pretrigger_s=None, start=None, metadata=None, source="csv",
+                              format_evidence="manual-only", warnings=["caller note"])
+    with pytest.warns(UserWarning) as caught:
+        events = waveform.events_from_records(records, distance_m=distances[:3], charge_kg=[100.0] * 3)
+    assert len(caught) == 1
+    message = str(caught[0].message)
+    assert "no pretrigger given: time starts at 0 (records 0, 2)" in message
+    assert "caller note (record 2)" in message
+    assert events.attrs["warnings"] == ["record 0: no pretrigger given: time starts at 0", "record 2: caller note",
+                                        "record 2: no pretrigger given: time starts at 0"]
+    assert events.attrs["format_evidence"] == ["user", "user", "manual-only"]
+
+
+def test_events_from_records_without_warnings_is_silent():
+    records, distances = _site_records()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        events = waveform.events_from_records(records, distance_m=distances, charge_kg=[100.0] * 6)
+    assert events.attrs["warnings"] == []
+    assert events.attrs["format_evidence"] == ["user"] * 6
+
+
+def test_summary_pickles_and_deep_copies():
+    s = waveform.analyze(_record(pretrigger_s=None))
+    for c in (pickle.loads(pickle.dumps(s)), copy.deepcopy(s)):
+        assert type(c) is waveform.RecordSummary
+        assert repr(c) == repr(s)  # mismo contenido (los NaN no se comparan con ==)
+        assert isinstance(c.channels, MappingProxyType)
+        with pytest.raises(TypeError):
+            c.channels["mic"] = None
+
+
 def test_events_from_records_passes_the_zc_method():
     records, distances = _site_records()
     events = waveform.events_from_records(records[:2], distance_m=distances[:2], charge_kg=[100.0] * 2,
@@ -295,6 +335,12 @@ def test_fft_frequency_of_a_flat_signal_is_nan():
     for x in (np.zeros(64), np.full(64, 0.1)):
         f, peaks = waveform.fft_frequency(x, 1024.0)
         assert math.isnan(f) and peaks == ()
+
+
+@pytest.mark.parametrize("x", [[5.0, 5.0 + 1e-15, 5.0], [1e16, 1e16 + 2, 1e16, 1e16]])
+def test_fft_frequency_of_a_rounding_level_signal_is_nan(x):
+    f, peaks = waveform.fft_frequency(np.array(x), 1024.0)
+    assert math.isnan(f) and peaks == ()
 
 
 def test_fft_frequency_domain_errors():

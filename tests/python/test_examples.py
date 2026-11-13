@@ -25,10 +25,14 @@ EXAMPLE_2 = pathlib.Path(__file__).resolve().parents[2] / "examples" / "02-wavef
 def test_waveform_to_events_example(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", [str(EXAMPLE_2)])  # no output directory: the current one
-    runpy.run_path(str(EXAMPLE_2), run_name="__main__")
+    with pytest.warns(UserWarning, match="units inferred") as caught:  # one summary warning for the six records
+        runpy.run_path(str(EXAMPLE_2), run_name="__main__")
+    assert len(caught) == 1
     assert (tmp_path / "record.png").is_file()
     lines = capsys.readouterr().out.splitlines()
     assert any(line.startswith("PPV") for line in lines)
+    assert any(line.startswith("Warnings carried by the records") for line in lines)
+    assert any("geophone units inferred as mm/s" in line for line in lines)
     start = next(i for i, line in enumerate(lines) if line.startswith("Events table"))
     table = []
     for line in lines[start + 1:]:

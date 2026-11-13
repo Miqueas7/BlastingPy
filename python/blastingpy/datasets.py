@@ -76,12 +76,14 @@ def synthetic_record(*, seed: int = 0, sample_rate_hz: float = 1024.0, duration_
     """Seeded synthetic seismograph record: one damped sinusoid per blasthole on each channel.
 
     Hole ``k`` starts ``k * delay_ms`` after the trigger (``t = 0``) and contributes
-    ``exp(-damping * 2 pi f (t - tau_k)) * sin(2 pi f (t - tau_k) + phase)``. Each geophone has its own phase (between -30 and 0 degrees, so the peak is a whole lobe, not one cut by the onset), drawn from
-    ``seed``; ``noise_mm_s`` is the standard deviation of Gaussian noise added before scaling, and the signal is then
-    scaled so that the largest ``|x|`` of every geophone is exactly ``ppv_mm_s`` (``mic_pa`` for the microphone, which
-    is left out with ``mic_pa=None``). With ``quantize=True`` the values are rounded to multiples of 0.00788 mm/s and
-    0.0156 Pa, the sensor resolutions, so the peak is within half a step of the target. The same ``seed`` gives the
-    same record. Returns a :class:`blastingpy.io.Record` (``source="arrays"``).
+    ``exp(-damping * 2 pi f (t - tau_k)) * sin(2 pi f (t - tau_k) + phase)``. Each geophone has its own phase
+    (between -30 and 0 degrees, so the peak is a whole lobe, not one cut by the onset), drawn from ``seed``. Each
+    channel is scaled so that its largest ``|x|`` is exactly ``ppv_mm_s`` (``mic_pa`` for the microphone, which is
+    left out with ``mic_pa=None``). ``noise_mm_s`` adds Gaussian noise in mm/s to the scaled geophones only (never to
+    the microphone); each geophone is then rescaled so that its largest ``|x|`` is still exactly ``ppv_mm_s``, so the
+    noise standard deviation is approximately ``noise_mm_s``. With ``quantize=True`` the values are rounded to
+    multiples of 0.00788 mm/s and 0.0156 Pa, the sensor resolutions, so the peak is within half a step of the target.
+    The same ``seed`` gives the same record. Returns a :class:`blastingpy.io.Record` (``source="arrays"``).
     """
     if isinstance(seed, bool) or not isinstance(seed, (int, np.integer)):
         raise _bad("seed", "must be an integer", seed)
@@ -115,9 +117,10 @@ def synthetic_record(*, seed: int = 0, sample_rate_hz: float = 1024.0, duration_
         if target is None:
             continue
         x = sum(_burst(t, k * delay / 1000.0, f, zeta, phase) for k in range(int(holes)))
-        if noise > 0:
-            x = x + noise * rng.standard_normal(n)
         x = x * (target / np.abs(x).max())
+        if noise > 0 and name != "mic":  # ruido en mm/s, solo en los geófonos ya escalados (R19)
+            x = x + noise * rng.standard_normal(n)
+            x = x * (target / np.abs(x).max())  # el pico vuelve a ser exactamente ppv_mm_s
         channels[name] = np.round(x / step) * step if quantize else x
     return io.from_arrays(channels, fs, units={"geophone": "mm/s", "mic": "Pa"}, pretrigger_s=pre,
                           metadata={"generator": "synthetic_record", "seed": str(seed)})

@@ -47,6 +47,12 @@ events = waveform.events_from_records(records, distance_m=distances_m, charge_kg
 print(f"Events table ({len(events)} events):")
 print(events[["distance_m", "charge_kg", "ppv_mm_s", "ppv_kind", "frequency_hz"]].round(2).to_string(index=False))
 print()
+# The records' warnings travel with the table, as "record <i>: <warning>"; here, each distinct one once.
+distinct = dict.fromkeys(w.split(": ", 1)[1] for w in events.attrs["warnings"])
+print(f"Warnings carried by the records ({len(distinct)} distinct):")
+for message in distinct:
+    print("  warning:", message)
+print()
 
 # 6. Site law and verdict, as in example 1. Six events fit but warn (fewer than 30).
 law = attenuation.fit(events, law="sqrt")

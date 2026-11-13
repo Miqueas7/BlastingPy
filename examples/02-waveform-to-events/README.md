@@ -19,6 +19,6 @@ prints a short summary and never opens a window.
 | 2 | file write | The minimal Instantel ASCII: a row `Tran Vert Long MicL` and one row per sample. |
 | 3 | `io.read_instantel_ascii` | The file has no sample rate or pretrigger, so you pass `sample_rate_hz=1024, pretrigger_s=0.25`. Units are inferred from the resolution (with a warning). |
 | 4 | `waveform.analyze` | Peak, vector sum, zero-crossing frequency and airblast level of the first record. |
-| 5 | `waveform.events_from_records` | One events row per record: largest component as `ppv_mm_s` (`component_max`) and its zero-crossing frequency. |
+| 5 | `waveform.events_from_records` | One events row per record: largest component as `ppv_mm_s` (`component_max`) and its zero-crossing frequency. The records' warnings travel in `events.attrs["warnings"]` (one `UserWarning` sums them up); the script prints each distinct one. |
 | 6 | `attenuation.fit`, `criteria.evaluate` | The site law and a verdict per event against `USBM-RI8507-1980` / `appendix-b-drywall`. Six events fit but warn (fewer than 30). |
 | 7 | `plotting.plot_record` | `record.png`: one panel per channel with its peak marked. |

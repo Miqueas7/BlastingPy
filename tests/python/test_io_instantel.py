@@ -265,11 +265,62 @@ def test_blastware_block_count_mismatch(tmp_path):
 
 
 def test_blastware_two_geophone_units_give_no_header_unit(tmp_path):
-    header = ["Sample Rate 1024 sps", "Geophone mm/s", "Range 10 in/s", "Microphone Pa"]
+    # «Range 10 in/s» ya no sirve aquí: las líneas con range/trigger/level no dan unidades (R18).
+    header = ["Sample Rate 1024 sps", "Geophone mm/s", "Display in/s", "Microphone Pa"]
     path = _write(tmp_path, _blastware_header(header) + "\t".join(NAMES) + "\n" + _rows())
     rec = read_instantel_ascii(path, units={"geophone": "in/s"})  # no hay conflicto: el encabezado no decide
-    assert any("geophone" in w and "mm/s" in w and "in/s" in w for w in rec.warnings)
+    assert any("two geophone units" in w and "mm/s" in w and "in/s" in w for w in rec.warnings)
     _assert_signal(rec, scale={"transverse": 25.4, "vertical": 25.4, "longitudinal": 25.4})
+
+
+# Encabezado de Blastware con claves que en THOR existen sin espacios (R17): sigue siendo Blastware.
+TRIGGER_HEADER = ["Event Report", "Sample Rate 1024 sps", "Geophone mm/s   Microphone Pa",
+                  "Geo Trigger Level: 0.508 mm/s", "Geo Range: 254 mm/s"]
+
+
+@pytest.mark.parametrize("layout", ["table", "blocks"])
+def test_blastware_trigger_and_range_keys_are_not_thor(tmp_path, layout):
+    body = "\t".join(NAMES) + "\n" + _rows() if layout == "table" else _blocks()
+    rec = read_instantel_ascii(_write(tmp_path, _blastware_header(TRIGGER_HEADER) + body))
+    assert rec.source == f"instantel-blastware-{layout}"
+    assert rec.format_evidence == "manual-only"
+    assert rec.sample_rate_hz == 1024.0
+    _assert_signal(rec)
+
+
+def test_readme_thor_keys_with_a_blocks_body_are_blastware(tmp_path):
+    header = ["Sample Rate 1024 sps", "Geophone mm/s   Microphone Pa", "GeoTriggerLevel: 0.508 mm/s",
+              "GeoRange: 254 mm/s"]
+    rec = read_instantel_ascii(_write(tmp_path, _blastware_header(header) + _blocks()))
+    assert rec.source == "instantel-blastware-blocks"
+    assert rec.format_evidence == "manual-only"
+    _assert_signal(rec)
+
+
+def test_blastware_mic_trigger_level_in_db_keeps_the_mic(tmp_path):
+    header = BW_HEADER + ["Mic Trigger Level: 120 dB(L)"]
+    rec = read_instantel_ascii(_write(tmp_path, _blastware_header(header) + "\t".join(NAMES) + "\n" + _rows()))
+    assert list(rec.channels) == list(CANON)
+    assert not any("two mic units" in w for w in rec.warnings)
+    _assert_signal(rec)
+
+
+def test_blastware_mic_trigger_level_alone_takes_the_units_argument(tmp_path):
+    header = ["Sample Rate 1024 sps", "Geophone mm/s", "Mic Trigger Level: 120 dB(L)"]
+    path = _write(tmp_path, _blastware_header(header) + "\t".join(NAMES) + "\n" + _rows())
+    rec = read_instantel_ascii(path, units={"mic": "Pa"})
+    assert list(rec.channels) == list(CANON)
+    assert not any("header suggests" in w for w in rec.warnings)
+    _assert_signal(rec)
+
+
+def test_blastware_units_argument_wins_over_the_header_hint_with_warning(tmp_path):
+    header = ["Sample Rate 1024 sps", "Geophone mm/s   Microphone dB"]
+    path = _write(tmp_path, _blastware_header(header) + "\t".join(NAMES) + "\n" + _rows())
+    rec = read_instantel_ascii(path, units={"mic": "Pa"})
+    assert list(rec.channels) == list(CANON)
+    assert any("header suggests" in w and "db" in w and "Pa" in w for w in rec.warnings)
+    _assert_signal(rec)
 
 
 COLON_HEADER = ["Sample Rate: 1024 sps", "Units: mm/s and pa", "Event Date: 2026-01-15", "Event Time: 10:20:30"]
@@ -364,6 +415,59 @@ def test_short_row_names_its_line(tmp_path):
     lines[5] = "\t".join(lines[5].split("\t")[:3])
     with pytest.raises(ValueError, match=r"line 6\b"):
         read_instantel_ascii(_write(tmp_path, "\n".join(lines) + "\n"), sample_rate_hz=FS, units=UNITS)
+
+
+@pytest.mark.parametrize("bad", ["1_0", "+.00788", "nan", "inf", "1e999", "0x10"])
+def test_number_outside_the_shared_pattern_names_its_line(tmp_path, bad):
+    lines = _minimal().splitlines()
+    fields = lines[4].split("\t")
+    fields[1] = bad
+    lines[4] = "\t".join(fields)
+    with pytest.raises(ValueError, match=r"line 5\b"):
+        read_instantel_ascii(_write(tmp_path, "\n".join(lines) + "\n"), sample_rate_hz=FS, units=UNITS)
+
+
+def test_scientific_notation_and_point_with_decimal_comma_are_accepted(tmp_path):
+    lines = _minimal().splitlines()
+    fields = lines[4].split("\t")
+    fields[0] = f"{SIGNAL['Tran'][3]:.5e}"  # notación científica
+    lines[4] = "\t".join(fields)
+    text = "\n".join(lines) + "\n"
+    _assert_signal(read_instantel_ascii(_write(tmp_path, text), sample_rate_hz=FS, units=UNITS))
+    # R11: con decimal="," también vale el punto decimal
+    _assert_signal(read_instantel_ascii(_write(tmp_path, text), sample_rate_hz=FS, units=UNITS, decimal=","))
+
+
+# ---------------------------------------------------------------- Decodificación y líneas
+
+
+def _bad_row_text(header):
+    lines = _rows().splitlines()
+    lines[2] = lines[2].replace(".", "x", 1)  # línea 3 de datos = línea 7 del archivo (3 de encabezado + nombres)
+    return _blastware_header(header) + "\t".join(NAMES) + "\n" + "\n".join(lines) + "\n"
+
+
+def test_cp1252_header_is_one_line_and_line_numbers_hold(tmp_path):
+    header = ["Event Report…", "Sample Rate 1024 sps", "Geophone mm/s   Microphone Pa"]
+    good = _blastware_header(header) + "\t".join(NAMES) + "\n" + _rows()
+    path = tmp_path / "cp1252.txt"
+    path.write_bytes(good.encode("cp1252"))  # «…» es el byte 0x85: en latin-1 sería U+0085, un fin de línea
+    rec = read_instantel_ascii(path)
+    assert rec.metadata["header_1"] == "Event Report…"
+    assert "header_4" not in rec.metadata
+    _assert_signal(rec)
+    path.write_bytes(_bad_row_text(header).encode("cp1252"))
+    with pytest.raises(ValueError, match=r"line 7\b"):
+        read_instantel_ascii(path)
+
+
+def test_unicode_line_separator_does_not_split_a_line(tmp_path):
+    header = ["Event Report", "Sample Rate 1024 sps", "Geophone mm/s   Microphone Pa"]
+    rec = read_instantel_ascii(_write(tmp_path, _blastware_header(header) + "\t".join(NAMES) + "\n" + _rows(),
+                                      crlf=True))
+    assert rec.metadata["header_1"] == "Event Report"
+    with pytest.raises(ValueError, match=r"line 7\b"):
+        read_instantel_ascii(_write(tmp_path, _bad_row_text(header), name="malo.txt", crlf=True))
 
 
 def test_invalid_decimal_argument(tmp_path):

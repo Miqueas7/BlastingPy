@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import math
 import numbers
+import warnings
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
 from types import MappingProxyType
 
@@ -68,7 +69,10 @@ class ChannelSummary:
 
 @dataclass(frozen=True)
 class RecordSummary:
-    """Analysis of one record; ``warnings`` lists the record's own warnings first, then the analysis ones."""
+    """Analysis of one record; ``warnings`` lists the record's own warnings first, then the analysis ones.
+
+    It can be pickled and deep-copied; ``channels`` stays read-only in the copy.
+    """
 
     channels: Mapping[str, ChannelSummary]
     pvs_mm_s: float  # suma vectorial real; NaN si falta un geófono
@@ -79,6 +83,17 @@ class RecordSummary:
     zc_method: str
     warnings: tuple[str, ...]
     start: datetime | None
+
+    def __reduce__(self):
+        # MappingProxyType no se serializa: se guarda como dict y se vuelve a congelar al reconstruir.
+        state = {f.name: getattr(self, f.name) for f in fields(self)}
+        state["channels"] = dict(self.channels)
+        return (_rebuild_summary, (state,))
+
+
+def _rebuild_summary(state: dict) -> RecordSummary:
+    """Inverse of ``RecordSummary.__reduce__``."""
+    return RecordSummary(**{**state, "channels": MappingProxyType(dict(state["channels"]))})
 
 
 def _is_real(value) -> bool:
@@ -97,7 +112,8 @@ def fft_frequency(x, sample_rate_hz: float) -> tuple[float, tuple[float, ...]]:
 
     The spectrum is ``|numpy.fft.rfft(x - mean(x))|`` without bin 0. A local maximum is a bin larger than its left
     neighbour and not smaller than its right one (the last bin compares only to the left); those with at least half
-    the largest amplitude are kept. A flat signal has no frequency: ``(nan, ())``.
+    the largest amplitude are kept. A flat signal, or one that varies only at rounding level so that no
+    peak is kept, has no frequency: ``(nan, ())``.
     """
     if not _is_real(sample_rate_hz) or sample_rate_hz <= 0:
         raise _param_error("sample_rate_hz", f"must be a finite number > 0. Received: {sample_rate_hz!r}")
@@ -117,6 +133,8 @@ def fft_frequency(x, sample_rate_hz: float) -> tuple[float, tuple[float, ...]]:
     right = np.append(amp[2:], -np.inf)  # el último bin solo se compara con el izquierdo
     local = i[(amp[1:] > amp[:-1]) & (amp[1:] >= right)]
     kept = local[amp[local] >= 0.5 * amp[1:].max()]
+    if kept.size == 0:  # variación al nivel del redondeo: el espectro no tiene un máximo local que valga
+        return math.nan, ()
     kept = kept[np.argsort(-amp[kept], kind="stable")]
     peaks = tuple(float(f) for f in freqs[kept])
     return peaks[0], peaks
@@ -228,12 +246,32 @@ def events_from_records(records: Sequence[Record], *, distance_m: Sequence[float
 
     ``distance_m`` and ``charge_kg`` (and ``point`` when given) have one item per record. Each record is analyzed with
     :func:`analyze` and turned into a row with :func:`to_event_row` (``date`` is the record's start).
+
+    Nothing the records carry is lost: ``df.attrs["warnings"]`` lists every warning of every summary (the record's
+    own, then the analysis ones) as ``"record <i>: <warning>"`` (``i`` is the position in ``records``), and
+    ``df.attrs["format_evidence"]`` lists each record's ``format_evidence``. When there are warnings, a single
+    ``UserWarning`` names each distinct one with the records that carry it.
     """
     records = list(records)
     n = len(records)
     distances = _per_record("distance_m", distance_m, n)
     charges = _per_record("charge_kg", charge_kg, n)
     points = [None] * n if point is None else _per_record("point", point, n)
-    rows = [to_event_row(analyze(r, zc_method=zc_method), distance_m=d, charge_kg=w, point=p)
-            for r, d, w, p in zip(records, distances, charges, points)]
-    return pd.DataFrame(rows, columns=list(_ORDER))
+    summaries = [analyze(r, zc_method=zc_method) for r in records]
+    rows = [to_event_row(s, distance_m=d, charge_kg=w, point=p)
+            for s, d, w, p in zip(summaries, distances, charges, points)]
+    df = pd.DataFrame(rows, columns=list(_ORDER))
+
+    where: dict[str, list[int]] = {}  # aviso distinto -> registros que lo traen, en orden de aparición
+    for i, s in enumerate(summaries):
+        for w in s.warnings:
+            where.setdefault(w, [])
+            if i not in where[w]:
+                where[w].append(i)
+    df.attrs["warnings"] = [f"record {i}: {w}" for i, s in enumerate(summaries) for w in s.warnings]
+    df.attrs["format_evidence"] = [r.format_evidence for r in records]
+    if where:
+        parts = [f"{w} (record{'s' if len(idx) > 1 else ''} {', '.join(map(str, idx))})" for w, idx in where.items()]
+        warnings.warn(f"{len(where)} distinct warning{'s' if len(where) > 1 else ''} in the records (all of them in "
+                      f"df.attrs['warnings']): " + "; ".join(parts), UserWarning, stacklevel=2)
+    return df
