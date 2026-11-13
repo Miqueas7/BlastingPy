@@ -139,6 +139,73 @@ def test_single_open_ended_table_draws():
     assert len(ax.collections) >= 2 and sum(len(c.get_offsets()) for c in _points(ax)) == 6
 
 
+SHIPPED = [(p, c) for p in criteria.list_profiles() for c in criteria.load_profile(p).criteria]
+
+
+@pytest.mark.parametrize("profile, criterion", SHIPPED)
+def test_every_shipped_criterion_draws(profile, criterion):
+    # table-13-* empieza en 0 Hz: geomspace no admite 0 y el gráfico se caía.
+    ev = synthetic_events(n=15, seed=10)
+    ax = plot_compliance(ev, profile, criterion)
+    assert sum(len(c.get_offsets()) for c in _points(ax)) == 15
+
+
+@pytest.mark.parametrize("frequency_range", [(0.2, 300.0), (5.0, 30.0)])
+def test_curve_starting_at_zero_hz_is_sampled_from_a_positive_frequency(frequency_range):
+    ev = synthetic_events(n=5, seed=11, frequency_range=frequency_range)
+    ax = plot_compliance(ev, "USBM-RI8507-1980", "table-13-plaster")
+    x, _ = ax.lines[0].get_data()
+    f = ev["frequency_hz"]
+    assert x.min() == pytest.approx(min(f.min(), 1.0)) and x.max() == pytest.approx(max(f.max() * 1.5, 100.0))
+
+
+def _counts(ax):
+    pts = _points(ax)
+    return sum(len(c.get_offsets()) for c in pts), sum(len(c.get_offsets()) for c in pts if _color(c) == RED)
+
+
+def test_chart_draws_exactly_the_candidates_of_the_verdict():
+    # ppv_kind vertical: el veredicto usa ppv_mm_s como componente vertical; el gráfico no la dibujaba.
+    ev = synthetic_events(n=20, seed=12)
+    ev["ppv_kind"] = "vertical"
+    out = criteria.evaluate(ev, "USBM-RI8507-1980", "appendix-b-drywall")
+    drawn, red = _counts(plot_compliance(ev, "USBM-RI8507-1980", "appendix-b-drywall"))
+    assert (out.status == "exceeds").sum() > 0
+    assert drawn == 20 and red == (out.status == "exceeds").sum()
+    # vector_sum nunca es candidato de un perfil de componente máxima: no se dibuja contra la tabla.
+    ev["ppv_kind"] = "vector_sum"
+    ax = plot_compliance(ev, "OSMRE-30CFR816.67", "distance-table")
+    assert _counts(ax) == (0, 0) and any("not drawn: 20" in t for t in _legend(ax))
+
+
+def test_components_without_a_peak_frequency_column():
+    # Sin columna frequency_hz el pico no tiene par; antes se enmascaraba la transversal en su lugar.
+    ev = pd.DataFrame([dict(distance_m=100.0, charge_kg=10.0, ppv_mm_s=8.0, ppv_kind="vertical", ppv_t_mm_s=30.0,
+                            freq_t_hz=10.0)])
+    ax = plot_compliance(ev, "USBM-RI8507-1980", "appendix-b-drywall")
+    assert _counts(ax) == (1, 1)
+    # Sin ningún par dibujable: no hay IndexError, la leyenda cuenta el evento no dibujado.
+    ev = pd.DataFrame([dict(distance_m=100.0, charge_kg=10.0, ppv_mm_s=8.0, ppv_kind="component_max")])
+    ax = plot_compliance(ev, "USBM-RI8507-1980", "appendix-b-drywall")
+    assert _counts(ax) == (0, 0) and any("not drawn: 1" in t for t in _legend(ax))
+
+
+def test_curve_without_any_defined_limit_is_a_domain_error(monkeypatch):
+    import numpy as np
+    from blastingpy import plotting
+    monkeypatch.setattr(plotting, "_curve_frequencies", lambda segments, f_data: np.array([1e6, 2e6]))
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter 'criterion'"):
+        plot_compliance(synthetic_events(n=3), "USBM-RI8507-1980", "appendix-b-drywall")
+
+
+def test_plotting_uses_no_private_criteria_helpers():
+    import inspect
+    from blastingpy import plotting
+    source = inspect.getsource(plotting)
+    for name in ("_get_criterion", "_COMPONENTS", "_cc", "_REL_TOL"):
+        assert f"criteria.{name}" not in source
+
+
 def test_compliance_unsupported_criterion():
     flat = {"profile_id": "X", "quantity": "component_max", "units": {"velocity": "mm/s"},
             "criteria": [{"id": "f", "kind": "flat", "limit": 10.0}]}

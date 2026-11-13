@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import pandas as pd
 
 from . import criteria
 from .attenuation import Law
@@ -59,37 +60,42 @@ def plot_site_law(fit, events, ax=None):
 
 
 def _curve_frequencies(segments, f_data) -> np.ndarray:
+    """Frequencies where the curve is drawn: its domain, made finite and positive from the data when it is open."""
     lo, hi = segments[0].f_min, segments[-1].f_max
     if not math.isfinite(hi):
-        hi = max(max(f_data, default=0.0), lo * 100.0)
+        hi = max([f * 1.5 for f in f_data] + [100.0])
+    if lo <= 0:  # geomspace no admite 0: se empieza en la menor frecuencia de los datos o en 1 Hz
+        lo = min([*f_data, 1.0, hi / 10.0])
     # Los bordes de tramo, y un punto justo antes, para que un escalón se dibuje vertical.
     edges = np.array([s.f_max for s in segments if lo < s.f_max < hi])
     return np.sort(np.concatenate([np.geomspace(lo, hi, _SAMPLES), edges, edges * (1 - 1e-9)]))
 
 
+def _curve_limits(profile, criterion, frequencies) -> np.ndarray:
+    """The limit at each frequency, from the verdict's own candidates (NaN where the curve has none)."""
+    probe = pd.DataFrame({"ppv_mm_s": 1.0, "ppv_kind": profile.quantity, "frequency_hz": frequencies})
+    return np.array([cands[0].limit_mm_s for cands in criteria.candidates(probe, profile, criterion)])
+
+
 _WITHIN, _ABOVE, _NONE = "within limit", "above limit", "no limit at this coordinate"
 _POINT_COLORS = {_WITHIN: "tab:green", _ABOVE: "tab:red", _NONE: "tab:gray"}
 _VERDICTS = ("complies", "exceeds", "indeterminate", "not_comparable")
-
-
-def _point_limit(c, x: float) -> float:
-    """Limit at the coordinate ``x`` (NaN if there is none), with the same evaluation as the verdict."""
-    if not (math.isfinite(x) and x > 0):
-        return math.nan
-    if c.kind == "frequency_curve":
-        r = criteria._cc.limit_at(list(c.segments), x)
-        return r.limit if r.defined else math.nan
-    return next((r.limit_mm_s for r in c.rows if x <= r.d_max_m * (1 + criteria._REL_TOL)), math.nan)
+# Series del gráfico por etiqueta de candidato: el valor propio del evento y cada componente.
+_SERIES = {"": ("Peak", "o"), "transverse": ("Transverse", "^"), "vertical": ("Vertical", "^"),
+           "longitudinal": ("Longitudinal", "^")}
 
 
 def plot_compliance(events, profile, criterion, ax=None):
     """Events against the limit of ``criterion`` (frequency curve or distance table); returns the Axes.
 
-    The limit is drawn with the same evaluation as :func:`criteria.evaluate`. Each point is coloured by its own
-    comparison with the limit at its coordinate (within, above, or no limit there); a point of an event whose verdict
-    is ``not_comparable`` or ``indeterminate`` is hollow. The legend counts the events by verdict.
+    The chart draws exactly the candidates :func:`criteria.evaluate` used (see :func:`criteria.candidates`), and the
+    limit with the same evaluation. Each point is coloured by its own comparison with its limit (within, above, or no
+    limit at its coordinate); a point of an event whose verdict is ``not_comparable`` or ``indeterminate`` is hollow.
+    The legend counts the events by verdict and the events with no point drawn.
     """
-    profile, c = criteria._get_criterion(profile, criterion)
+    profile = criteria.load_profile(profile)
+    per_event = criteria.candidates(events, profile, criterion)  # valida el criterio y las columnas
+    c = profile.criteria[criterion]
     if c.kind not in ("frequency_curve", "distance_table"):
         raise _unsupported("criterion", "frequency_curve and distance_table criteria")
     status = criteria.evaluate(events, profile, criterion)["status"].to_numpy()
@@ -98,47 +104,53 @@ def plot_compliance(events, profile, criterion, ax=None):
     from matplotlib.lines import Line2D
     label = f"{profile.profile_id} {criterion} [{c.verification}]"
     if c.kind == "frequency_curve":
-        pairs = [("Peak", "o", "ppv_mm_s", "frequency_hz")]
-        pairs += [(name.capitalize(), "^", v, f) for name, v, f in criteria._COMPONENTS]
-        pts = [(name, marker, events[v].to_numpy(float), events[f].to_numpy(float))
-               for name, marker, v, f in pairs if v in events and f in events]
-        if profile.quantity == "component_max":  # un pico de otra magnitud no se compara con este límite
-            pts[0] = (*pts[0][:2], np.where(events["ppv_kind"] == "component_max", pts[0][2], np.nan), pts[0][3])
-        freqs = _curve_frequencies(c.segments, [x for *_, f in pts for x in f[np.isfinite(f)]])
-        defined = [(x, r.limit) for x in freqs if (r := criteria._cc.limit_at(list(c.segments), float(x))).defined]
-        ax.plot(*zip(*defined), color="black", label=label)
+        coords = [[cand.frequency_hz for cand in cands] for cands in per_event]
+        freqs = _curve_frequencies(c.segments, [x for xs in coords for x in xs if math.isfinite(x) and x > 0])
+        limits = _curve_limits(profile, criterion, freqs)
+        defined = np.isfinite(limits)
+        if not defined.any():
+            raise ValueError(f"Domain error [BlastingPy]: parameter 'criterion' {criterion!r} has no limit at any "
+                             f"frequency to draw")
+        ax.plot(freqs[defined], limits[defined], color="black", label=label)
         xlabel = "Frequency (Hz)"
     else:
         dist = events["distance_m"].to_numpy(float)
+        coords = [[d] * len(cands) for d, cands in zip(dist, per_event)]
+        known = [d for d in dist if math.isfinite(d) and d > 0]
         finite = [r.d_max_m for r in c.rows if math.isfinite(r.d_max_m)]
-        left = min([dist.min(), *finite]) / 2
-        x_end = max([dist.max() * 1.5, *(d * 2 for d in finite)])
+        left = min([*known, *finite], default=1.0) / 2
+        x_end = max([*(d * 1.5 for d in known), *(d * 2 for d in finite)], default=left * 200)
         for i, r in enumerate(c.rows):
             right = r.d_max_m if math.isfinite(r.d_max_m) else x_end
             ax.hlines(r.limit_mm_s, left, right, color="black", label=label if i == 0 else None)
             left = right
-        pts = [("Peak", "o", events["ppv_mm_s"].to_numpy(float), dist)]
         xlabel = "Distance (m)"
     hollow = np.isin(status, ("not_comparable", "indeterminate"))
     drawn = np.zeros(len(status), dtype=bool)
+    points = {key: [] for key in _SERIES}  # serie -> [(x, ppv, color, hueco)]
+    for i, (cands, xs) in enumerate(zip(per_event, coords)):
+        for cand, x in zip(cands, xs):
+            if not (math.isfinite(x) and x > 0):
+                continue
+            drawn[i] = True
+            kind = _NONE if math.isnan(cand.limit_mm_s) else (_ABOVE if cand.exceeds else _WITHIN)
+            points[cand.label].append((x, cand.ppv_mm_s, kind, bool(hollow[i])))
     seen = set()
-    for _, marker, values, xs in pts:
-        ok = np.isfinite(values) & np.isfinite(xs)
-        drawn |= ok
-        limits = np.array([_point_limit(c, x) if k else math.nan for x, k in zip(xs, ok)])
-        kind = np.where(np.isnan(limits), _NONE, np.where(values <= limits * (1 + criteria._REL_TOL), _WITHIN, _ABOVE))
+    for key, pts in points.items():
         for k in _POINT_COLORS:
             for h in (False, True):
-                m = ok & (kind == k) & (hollow == h)
-                if not m.any():
+                sel = [(x, v) for x, v, kind, hol in pts if kind == k and hol == h]
+                if not sel:
                     continue
                 name = k + (" (event not fully evaluated)" if h else "")
                 colors = dict(facecolors="none", edgecolors=_POINT_COLORS[k]) if h else dict(color=_POINT_COLORS[k])
-                ax.scatter(xs[m], values[m], s=22, marker=marker, label=None if name in seen else name, **colors)
+                xs, values = zip(*sel)
+                ax.scatter(xs, values, s=22, marker=_SERIES[key][1], label=None if name in seen else name, **colors)
                 seen.add(name)
     handles, labels = ax.get_legend_handles_labels()
-    for name, marker, *_ in pts:
-        if len(pts) > 1:
+    series = [_SERIES[key] for key, pts in points.items() if pts]
+    for name, marker in series:
+        if len(series) > 1:
             handles.append(Line2D([], [], linestyle="none", marker=marker, color="0.4"))
             labels.append(name)
     counts = ", ".join(f"{(status == v).sum()} {v.replace('_', ' ')}" for v in _VERDICTS if (status == v).any())
