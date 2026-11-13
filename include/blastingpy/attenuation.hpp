@@ -107,6 +107,13 @@ inline void warn_if_outside(std::vector<std::string>& warnings, const std::strin
                        d::num(hi) + "] " + unit + ": extrapolation");
 }
 
+/// Con sigma = 0 o z = 0 (p. ej. make_site_law sin sigma) la cota superior es la mediana: se avisa al usarla.
+inline void warn_if_no_margin(std::vector<std::string>& warnings, const SiteLaw& f, Level level) {
+    if (level == Level::Upper && (f.sigma == 0.0 || f.z == 0.0))
+        warnings.push_back(
+            "the upper bound equals the median (sigma or z is 0): this result has no safety margin");
+}
+
 inline double finite_result(double value, const char* name) {
     validation::require(std::isfinite(value) && value > 0.0, name,
                         "gives a result outside the numeric range (not finite or underflows to 0)", value);
@@ -115,7 +122,7 @@ inline double finite_result(double value, const char* name) {
 
 }  // namespace attenuation_detail
 
-/// Resultado de una predicción o inversa, con los avisos de extrapolación.
+/// Resultado de una predicción o inversa, con sus avisos (extrapolación; cota superior sin margen).
 struct Prediction {
     double value;
     std::vector<std::string> warnings;
@@ -133,6 +140,7 @@ inline Prediction predict_ppv(const SiteLaw& law, double distance_m, double char
                                "distance_m");
     a::warn_if_outside(r.warnings, "distance", "m", distance_m, law.distance_min_m, law.distance_max_m);
     a::warn_if_outside(r.warnings, "charge", "kg", charge_kg, law.charge_min_kg, law.charge_max_kg);
+    a::warn_if_no_margin(r.warnings, law, level);
     return r;
 }
 
@@ -148,6 +156,7 @@ inline Prediction max_charge(const SiteLaw& law, double distance_m, double ppv_l
         "ppv_limit_mm_s");
     a::warn_if_outside(r.warnings, "distance", "m", distance_m, law.distance_min_m, law.distance_max_m);
     a::warn_if_outside(r.warnings, "computed charge", "kg", r.value, law.charge_min_kg, law.charge_max_kg);
+    a::warn_if_no_margin(r.warnings, law, level);
     return r;
 }
 
@@ -164,6 +173,7 @@ inline Prediction distance_for_ppv(const SiteLaw& law, double charge_kg, double 
         "ppv_limit_mm_s");
     a::warn_if_outside(r.warnings, "charge", "kg", charge_kg, law.charge_min_kg, law.charge_max_kg);
     a::warn_if_outside(r.warnings, "computed distance", "m", r.value, law.distance_min_m, law.distance_max_m);
+    a::warn_if_no_margin(r.warnings, law, level);
     return r;
 }
 

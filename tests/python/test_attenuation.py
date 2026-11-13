@@ -27,7 +27,7 @@ def test_module_is_reachable_from_the_package():
 
 
 def test_brief_values_and_read_only_prediction():
-    p = att.predict_ppv(LAW, 100.0, 25.0)
+    p = att.predict_ppv(LAW, 100.0, 25.0, att.Level.Median)
     assert p.value == pytest.approx(8.2864, abs=1e-3)
     assert p.warnings == []
     with pytest.raises(AttributeError):
@@ -57,8 +57,19 @@ def test_published_bulletin_656_scaled_distance():
 def test_fitted_range_warnings_and_errors_from_the_core():
     law = att.fit(_events())
     assert any("outside the fitted range" in w for w in att.predict_ppv(law, 1000.0, 100.0).warnings)
-    assert att.predict_ppv(law, 200.0, 100.0).warnings == []
-    assert att.predict_ppv(LAW, 1e6, 1e-3).warnings == []  # make_site_law: no range, never warns
+    assert att.predict_ppv(law, 200.0, 100.0, att.Level.Median).warnings == []
+    # make_site_law: sin rango, nunca avisa de extrapolación
+    assert att.predict_ppv(LAW, 1e6, 1e-3, att.Level.Median).warnings == []
+    assert not any("outside the fitted range" in w for w in att.predict_ppv(LAW, 1e6, 1e-3).warnings)
+
+
+def test_user_law_without_sigma_says_the_upper_bound_has_no_margin():
+    # make_site_law sin sigma: k_upper == k, y la carga «con cota» es la mediana sin margen. Se avisa.
+    for call in (lambda lv: att.predict_ppv(LAW, 100.0, 25.0, lv), lambda lv: att.max_charge(LAW, 100.0, 5.0, lv),
+                 lambda lv: att.distance_for_ppv(LAW, 25.0, 5.0, lv)):
+        assert any("no safety margin" in w for w in call(att.Level.Upper).warnings)
+        assert call(att.Level.Median).warnings == []
+    assert att.max_charge(SIGMA_LAW, 100.0, 5.0).warnings == []
     with pytest.raises(ValueError, match="parameter 'distance_m'"):
         att.predict_ppv(LAW, 0.0, 25.0)
     with pytest.raises(ValueError, match="parameter 'ppv_limit_mm_s'"):

@@ -82,8 +82,25 @@ TEST(Predict, UpperIsMedianTimesTenToZSigma) {
     const double median = predict_ppv(law, 100.0, 25.0, Level::Median).value;
     EXPECT_NEAR(predict_ppv(law, 100.0, 25.0, Level::Upper).value / median, 1.7019, 1e-3);
     EXPECT_DOUBLE_EQ(predict_ppv(law, 100.0, 25.0).value, predict_ppv(law, 100.0, 25.0, Level::Upper).value);
-    // La carga permitida con la cota es menor que con la mediana.
+    // La carga permitida con la cota es menor que con la mediana, y la distancia necesaria es mayor.
     EXPECT_LT(max_charge(law, 100.0, 10.0, Level::Upper).value, max_charge(law, 100.0, 10.0, Level::Median).value);
+    EXPECT_GT(distance_for_ppv(law, 25.0, 5.0, Level::Upper).value,
+              distance_for_ppv(law, 25.0, 5.0, Level::Median).value);
+}
+
+TEST(Predict, UpperWithoutSigmaOrZWarnsThatThereIsNoMargin) {
+    const std::string no_margin = "no safety margin";
+    for (const auto& law : {make_site_law(Law::SquareRoot, 1000.0, 1.6),                      // sigma = 0
+                            make_site_law(Law::SquareRoot, 1000.0, 1.6, kNan, 0.115470, 0.0)}) {  // z = 0
+        EXPECT_TRUE(has(predict_ppv(law, 100.0, 25.0).warnings, no_margin));
+        EXPECT_TRUE(has(max_charge(law, 100.0, 5.0).warnings, no_margin));
+        EXPECT_TRUE(has(distance_for_ppv(law, 25.0, 5.0).warnings, no_margin));
+        EXPECT_TRUE(predict_ppv(law, 100.0, 25.0, Level::Median).warnings.empty());
+        EXPECT_TRUE(max_charge(law, 100.0, 5.0, Level::Median).warnings.empty());
+        EXPECT_TRUE(distance_for_ppv(law, 25.0, 5.0, Level::Median).warnings.empty());
+    }
+    const auto with_margin = make_site_law(Law::SquareRoot, 1000.0, 1.6, kNan, 0.115470);
+    EXPECT_TRUE(max_charge(with_margin, 100.0, 5.0).warnings.empty());
 }
 
 TEST(Predict, RoundTripsInAllThreeLaws) {
@@ -121,7 +138,7 @@ TEST(Predict, FittedRangeWarnings) {
     EXPECT_TRUE(has(predict_ppv(law, 1000.0, 100.0).warnings, out));
     EXPECT_TRUE(has(predict_ppv(law, 1000.0, 100.0).warnings, "distance"));
     EXPECT_TRUE(has(predict_ppv(law, 20.0, 100.0).warnings, out));  // por debajo
-    EXPECT_FALSE(has(predict_ppv(law, 200.0, 100.0).warnings, "outside the fitted range of distance"));
+    EXPECT_TRUE(predict_ppv(law, 200.0, 100.0, Level::Median).warnings.empty());  // dentro de los dos rangos
     // Carga fuera del rango: avisa por la carga, no por la distancia.
     const auto w_only = predict_ppv(law, 200.0, 1000.0).warnings;
     EXPECT_TRUE(has(w_only, "charge"));
@@ -150,9 +167,15 @@ TEST(Predict, LawWithoutRangeNeverWarns) {
     const auto law = make_site_law(Law::SquareRoot, 1000.0, 1.6);
     EXPECT_TRUE(std::isnan(law.distance_min_m) && std::isnan(law.distance_max_m));
     EXPECT_TRUE(std::isnan(law.charge_min_kg) && std::isnan(law.charge_max_kg));
-    EXPECT_TRUE(predict_ppv(law, 1e6, 1e-3).warnings.empty());
-    EXPECT_TRUE(max_charge(law, 1e6, 1e-3).warnings.empty());
-    EXPECT_TRUE(distance_for_ppv(law, 1e6, 1e-3).warnings.empty());
+    const std::string range = "outside the fitted range";
+    for (Level level : {Level::Median, Level::Upper}) {  // con Upper avisa solo de la falta de margen
+        EXPECT_FALSE(has(predict_ppv(law, 1e6, 1e-3, level).warnings, range));
+        EXPECT_FALSE(has(max_charge(law, 1e6, 1e-3, level).warnings, range));
+        EXPECT_FALSE(has(distance_for_ppv(law, 1e6, 1e-3, level).warnings, range));
+    }
+    EXPECT_TRUE(predict_ppv(law, 1e6, 1e-3, Level::Median).warnings.empty());
+    EXPECT_TRUE(max_charge(law, 1e6, 1e-3, Level::Median).warnings.empty());
+    EXPECT_TRUE(distance_for_ppv(law, 1e6, 1e-3, Level::Median).warnings.empty());
 }
 
 TEST(Predict, RejectsNonPositiveOrNonFiniteInputsByName) {

@@ -97,7 +97,7 @@ NB_MODULE(_blastingpy_core, m) {
     nb::enum_<Level>(at, "Level", "Which constant of the law a prediction uses.")
         .value("Median", Level::Median, "k: the median of the fit")
         .value("Upper", Level::Upper, "k_upper = k * 10**(z * sigma)");
-    nb::class_<Prediction>(at, "Prediction", "A value and the extrapolation warnings that came with it.")
+    nb::class_<Prediction>(at, "Prediction", "A value and its warnings (extrapolation; upper bound with no margin).")
         .def_ro("value", &Prediction::value)
         .def_ro("warnings", &Prediction::warnings);
     at.def("predict_ppv", &predict_ppv, nb::arg("law"), nb::arg("distance_m"), nb::arg("charge_kg"),

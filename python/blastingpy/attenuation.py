@@ -15,7 +15,9 @@ Conventions
 * A law with ``beta <= 0`` (or ``a <= 0`` in ``Law.General``) can be fitted, with a warning, but ``predict_ppv``,
   ``max_charge`` and ``distance_for_ppv`` refuse it with a ``ValueError``.
 * Predictions return a :class:`Prediction` whose ``warnings`` list says when an input, or the computed charge or
-  distance, is outside the range of the data the law was fitted on (extrapolation).
+  distance, is outside the range of the data the law was fitted on (extrapolation), and, at ``Level.Upper``, when the
+  law has ``sigma == 0`` or ``z == 0`` (``make_site_law`` without ``sigma``): the upper bound is then the median and
+  the result has no safety margin.
 * A law predicts the PPV quantity it was fitted on (``ppv_kind``); :func:`fit` refuses events that mix kinds.
 """
 
