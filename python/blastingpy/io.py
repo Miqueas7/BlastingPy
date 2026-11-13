@@ -20,8 +20,9 @@ from pathlib import Path
 from types import MappingProxyType
 
 import numpy as np
+import pandas as pd
 
-from .events import _param_error
+from .events import _AMBIGUOUS, _NUMBER, _number, _param_error, _read_csv
 
 CHANNEL_NAMES = ("transverse", "vertical", "longitudinal", "mic")
 SOURCES = ("arrays", "instantel-thor", "instantel-blastware-table", "instantel-blastware-blocks",
@@ -265,14 +266,18 @@ def from_arrays(channels: Mapping[str, object], sample_rate_hz: float, *,
 # --------------------------------------------------------------------------- texto tabular
 # Ayudantes pequeños de lectura de texto: los usa read_instantel_ascii y los reusará read_waveform_csv.
 
-def _read_lines(path) -> list[tuple[int, str]]:
-    """Non-empty lines of a text file as ``(1-based line number, stripped text)``; BOM and CRLF accepted."""
+def _read_lines(path, strip: bool = True) -> list[tuple[int, str]]:
+    """Non-empty lines of a text file as ``(1-based line number, text)``; BOM and CRLF accepted.
+
+    With ``strip=False`` the text keeps its leading and trailing blanks (a leading tab is an empty first field).
+    """
     raw = Path(path).read_bytes()
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
         text = raw.decode("latin-1")
-    return [(i, line.strip()) for i, line in enumerate(text.splitlines(), start=1) if line.strip()]
+    return [(i, line.strip() if strip else line) for i, line in enumerate(text.splitlines(), start=1)
+            if line.strip()]
 
 
 def _guess_sep(line: str) -> str | None:
@@ -636,3 +641,254 @@ def read_instantel_ascii(path, *, sample_rate_hz: float | None = None, units: Ma
         if "unknown channel name" not in str(exc):
             raise
         raise ValueError(f"{exc}{_RENAMED_HINT}") from None
+
+
+# --------------------------------------------------------------------------- histograma de Instantel
+# Formato y evidencia: docs/investigacion/FUENTES_SPRINT2.md, «Formatos de exportación», D (solo el manual).
+
+_MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov",
+                                       "dec"), start=1)}
+_HIST_DATE = re.compile(r"^(\d{1,2})-([A-Za-z]{3})-(\d{2})$")
+_HIST_TIME = re.compile(r"^(\d{1,2}):(\d{2}):(\d{2})$")
+_HIST_MARKER = re.compile(r"^(N/A|[<>]\s*\d+(?:\.\d+)?)$", re.IGNORECASE)
+_HIST_WARNING = "manual-only: histogram layout built from the Blastware manual, not validated against a real file"
+_OTHER_UNITS = {"hz": "Hz", "db(a)": "dB(A)", "db(l)": "dB(L)", "db": "dB"}
+
+
+def _hist_unit(unit: str) -> tuple[str, float]:
+    """Unit text of a histogram column -> (SI unit text, factor to SI); unknown units are kept as written."""
+    key = unit.strip().rstrip(".").strip().lower()
+    if key in _GEOPHONE_UNITS:
+        return "mm/s", _GEOPHONE_UNITS[key]
+    if _MIC_UNITS.get(key) is not None:
+        return "Pa", _MIC_UNITS[key]
+    return _OTHER_UNITS.get(key, unit.strip()), 1.0
+
+
+def _hist_date(text: str):
+    """The date of a ``D-Mon-YY`` text (English month, 2-digit year as in ``strptime``) or None."""
+    m = _HIST_DATE.match(text)
+    month = _MONTHS.get(m[2].lower()) if m else None
+    if month is None:
+        return None
+    year = int(m[3])
+    try:
+        return datetime(2000 + year if year < 69 else 1900 + year, month, int(m[1])).date()
+    except ValueError:
+        return None
+
+
+def read_instantel_histogram(path) -> pd.DataFrame:
+    """Read a Blastware interval histogram exported to ASCII into a DataFrame.
+
+    Layout (built from the manual only, not validated against a real file): three header lines
+    (channel, quantity, unit; ``Time`` labels the first column on any of them), tab- or comma-separated
+    (decided by the first header line); a line holding only a date (``15-Feb-13``); then one row per
+    interval starting with the time ``H:MM:SS``. A later date-only line changes the date (midnight).
+
+    Columns: ``time`` (date + time, intervals need not be equal) and one per channel-quantity pair named
+    ``<channel>_<quantity>`` in lowercase with spaces removed (``Mic A`` + ``Lmax`` -> ``mica_lmax``); there is
+    no fixed list of quantities. A cell ``N/A``, ``<x`` or ``>x`` becomes NaN and its text goes to
+    ``<column>_flag`` (that column exists only for columns with at least one marker; other cells are None).
+    Any other non-numeric cell is a ``ValueError``. ``df.attrs["units"]`` maps each numeric column to its unit
+    after conversion (``in/s`` -> mm/s, ``psi`` -> Pa, converted once) and ``df.attrs["warnings"]`` carries the
+    "manual-only" warning.
+    """
+    lines = _read_lines(path, strip=False)
+    if len(lines) < 3:
+        raise _param_error("path", "has fewer than the three header lines (channel, quantity, unit)")
+    first = lines[0][1]
+    sep = "\t" if "\t" in first else "," if "," in first else None
+    if sep is None:
+        raise _param_error("path", "has no tab or comma separator in the first header line")
+
+    head = [[f.strip() for f in text.split(sep)] for _, text in lines[:3]]
+    for h in head:
+        while h and h[-1] == "":
+            h.pop()
+    n = max(len(h) for h in head)
+    head = [h + [""] * (n - len(h)) for h in head]
+    labels = [h[0] for h in head if h[0]]
+    if n < 2 or len(labels) != 1 or labels[0].lower() != "time":
+        raise _param_error("path", "must have the label 'Time' on one of the three header lines, in the first "
+                           "column, and at least one data column")
+    names, units, factors = [], [], []
+    for j in range(1, n):
+        channel, quantity, unit = head[0][j], head[1][j], head[2][j]
+        if not (channel and quantity and unit):
+            raise _param_error("path", f"has an incomplete header in column {j + 1} (channel, quantity and unit "
+                               f"are needed; got '{channel}', '{quantity}', '{unit}')")
+        name = f"{_normalize_name(channel)}_{_normalize_name(quantity)}"
+        if name in names:
+            raise _param_error("path", f"has two columns named '{name}' (channel and quantity repeat)")
+        si_unit, factor = _hist_unit(unit)
+        names.append(name)
+        units.append(si_unit)
+        factors.append(factor)
+
+    date = None
+    times: list[datetime] = []
+    values: list[list[float]] = [[] for _ in names]
+    flags: list[list[str | None]] = [[] for _ in names]
+    for lineno, text in lines[3:]:
+        fields = [f.strip() for f in text.split(sep)]
+        while len(fields) > n and fields[-1] == "":
+            fields.pop()
+        filled = [f for f in fields if f]
+        if len(filled) == 1 and _HIST_DATE.match(filled[0]):
+            date = _hist_date(filled[0])
+            if date is None:
+                raise _param_error("path", f"has an invalid date '{filled[0]}' at line {lineno} "
+                                   "(expected D-Mon-YY with an English month, e.g. 15-Feb-13)")
+            continue
+        m = _HIST_TIME.match(fields[0])
+        if m is None:
+            raise _param_error("path", f"has '{fields[0]}' at line {lineno}: expected a time H:MM:SS or a date "
+                               "D-Mon-YY")
+        if date is None:
+            raise _param_error("path", f"has a data row at line {lineno} before any date line (D-Mon-YY)")
+        if len(fields) != n:
+            raise _param_error("path", f"has {len(fields)} fields at line {lineno}, expected {n}")
+        try:
+            times.append(datetime.combine(date, dt_time(int(m[1]), int(m[2]), int(m[3]))))
+        except ValueError:
+            raise _param_error("path", f"has an invalid time '{fields[0]}' at line {lineno}") from None
+        for j, cell in enumerate(fields[1:]):
+            if _HIST_MARKER.match(cell):
+                values[j].append(np.nan)
+                flags[j].append(cell)
+                continue
+            number = _number(cell, ".")
+            if number is None or not np.isfinite(number):
+                raise _param_error("path", f"has a value that is not a number at line {lineno}, column "
+                                   f"'{names[j]}': '{cell}' (a number, N/A, <x or >x is expected)")
+            values[j].append(number * factors[j])
+            flags[j].append(None)
+    if not times:
+        raise _param_error("path", "has no data rows after the header")
+
+    out: dict[str, object] = {"time": pd.Series(times)}
+    for j, name in enumerate(names):
+        out[name] = np.array(values[j], dtype=float)
+        if any(f is not None for f in flags[j]):
+            out[f"{name}_flag"] = pd.Series(flags[j], dtype=object)
+    df = pd.DataFrame(out)
+    df.attrs["units"] = dict(zip(names, units))
+    df.attrs["warnings"] = [_HIST_WARNING]
+    return df
+
+
+# --------------------------------------------------------------------------- CSV genérico
+
+def _csv_column(cells, label: str, name: str, decimal) -> np.ndarray:
+    """A CSV column as floats, with the number rules of ``read_events`` (row 1 is the header)."""
+    out = np.empty(len(cells))
+    for i, cell in enumerate(cells):
+        text = str(cell).strip()
+        where = f"column '{name}' ({label}), row {i + 2}"
+        if text == "":
+            raise _param_error("path", f"has an empty cell in {where}")
+        if decimal is None and _AMBIGUOUS.match(text):
+            raise _param_error("path", f"has '{text}' in {where}, which is ambiguous: the mark may be a decimal or "
+                               "a thousands separator; pass decimal=',' or '.'")
+        number = _number(text, decimal)
+        if number is None or not np.isfinite(number):
+            raise _param_error("path", f"has a value that is not a number in {where}: received '{text}'; if the "
+                               "decimal mark is not what you expect, pass decimal=',' or '.'")
+        out[i] = number
+    return out
+
+
+def _real(value) -> bool:
+    return isinstance(value, (int, float, np.number)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _time_axis(t: np.ndarray, sample_rate_hz, pretrigger_s) -> tuple[float, float, list[str]]:
+    """Sample rate, pretrigger and warnings from a time column; explicit arguments must agree with it."""
+    if t.size < 2:
+        raise _param_error("time_column", "needs at least 2 rows to give the sample rate")
+    dt = np.diff(t)
+    step = float(np.median(dt))
+    if not step > 0:
+        raise _param_error("time_column", "must be increasing: the median time step is not positive")
+    dev = np.abs(dt - step) / step
+    k = int(np.argmax(dev))
+    if dev[k] > 1e-3:
+        raise _param_error("time_column", f"must have a uniform step: the step before row {k + 3} differs from the "
+                           f"median step {step:g} s by a relative {dev[k]:.3g} (tolerance 1e-3)")
+    fs = 1.0 / step
+    if sample_rate_hz is not None:
+        if not _real(sample_rate_hz) or abs(sample_rate_hz - fs) > 1e-3 * fs:
+            raise _param_error("sample_rate_hz", f"is {sample_rate_hz!r} but the time column gives {fs:g} Hz; "
+                               "drop the argument or fix the file")
+    t0 = float(t[0])
+    half = step / 2
+    warns: list[str] = []
+    if t0 < -half:
+        pre = -t0
+    else:
+        pre = 0.0
+        if t0 > half:
+            warns.append(f"the first sample is at t = {t0:g} s: the time axis is shifted to start at 0 and "
+                         "pretrigger_s is 0.0")
+    if pretrigger_s is not None:
+        if not _real(pretrigger_s) or abs(pretrigger_s - pre) > half:
+            raise _param_error("pretrigger_s", f"is {pretrigger_s!r} s but the time column gives {pre:g} s; "
+                               "drop the argument or fix the file")
+    return fs, pre, warns
+
+
+def read_waveform_csv(path, *, columns: Mapping[str, str], units: Mapping[str, str],
+                      sample_rate_hz: float | None = None, time_column: str | None = None,
+                      pretrigger_s: float | None = None, sep: str | None = None,
+                      decimal: str | None = None) -> Record:
+    """Read any brand's waveform exported as CSV into a :class:`Record` (renamed or unknown channels included).
+
+    ``columns`` maps a canonical channel name (``transverse``, ``vertical``, ``longitudinal``, ``mic``, or an
+    alias such as ``Tran``) to its column in the file; a mapped column that is missing is an error. ``units`` is
+    ``{"geophone": "mm/s" | "in/s", "mic": "Pa" | "psi"}`` (a kind left out is inferred, with a warning).
+
+    With ``time_column`` the sample rate is ``1 / median(dt)`` and the step must be uniform (relative deviation
+    <= 1e-3, so write the times with enough decimals); a negative first time ``t0`` gives ``pretrigger_s = -t0``,
+    ``t0`` near 0 gives 0.0 and ``t0 > 0`` gives 0.0 with a warning. An explicit ``sample_rate_hz`` or
+    ``pretrigger_s`` must agree with the time column. Without it, ``sample_rate_hz`` is required (never guessed).
+
+    Separator and decimal follow ``read_events``: with ``;`` the decimal mark is the comma, with ``,`` it is the
+    point, and with a tab either one is accepted except the ambiguous shape ``1,250``; ``sep`` and ``decimal``
+    override the detection. The record has ``source="csv"`` and ``format_evidence="user"``.
+    """
+    if not isinstance(columns, Mapping) or not columns:
+        raise _param_error("columns", "must be a non-empty mapping of canonical channel name to column name")
+    if decimal not in _NUMBER:
+        raise _param_error("decimal", f"must be ',' or '.' (got {decimal!r})")
+    if time_column is None and sample_rate_hz is None:
+        raise _param_error("sample_rate_hz", "is required when there is no time_column: the sample rate is "
+                           "never guessed")
+    table, found = _read_csv(path, sep)
+    if decimal is None and found == ";":
+        decimal = ","  # con ";" el punto es marca de miles: nunca se lee como decimal (igual que read_events)
+    elif decimal is None and found == ",":
+        decimal = "."
+
+    wanted = {name: str(file_col) for name, file_col in columns.items()}
+    if time_column is not None:
+        wanted["time"] = time_column
+    for label, file_col in wanted.items():
+        if file_col not in table.columns:
+            raise _param_error("columns" if label != "time" else "time_column",
+                               f"maps '{label}' to '{file_col}', which is not in the file; available columns: "
+                               f"{[str(c) for c in table.columns]}")
+        if (table.columns == file_col).sum() > 1:
+            raise _param_error("columns", f"has the column '{file_col}' twice in the header")
+    cells = {label: list(table[file_col]) for label, file_col in wanted.items()}
+    used = len(table)
+    while used and all(str(c[used - 1]).strip() == "" for c in cells.values()):
+        used -= 1  # líneas en blanco al final del archivo
+    data = {label: _csv_column(c[:used], label, wanted[label], decimal) for label, c in cells.items()}
+
+    warns: list[str] = []
+    pretrigger = pretrigger_s
+    if time_column is not None:
+        sample_rate_hz, pretrigger, warns = _time_axis(data.pop("time"), sample_rate_hz, pretrigger_s)
+    return _make_record(data, sample_rate_hz, units=units, pretrigger_s=pretrigger, start=None, metadata=None,
+                        source="csv", format_evidence="user", warnings=warns)
