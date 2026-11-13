@@ -12,6 +12,7 @@
 #include "blastingpy/least_squares.hpp"
 #include "blastingpy/method_info.hpp"
 #include "blastingpy/units.hpp"
+#include "blastingpy/waveform.hpp"
 
 namespace nb = nanobind;
 using namespace blastingpy;
@@ -131,4 +132,14 @@ NB_MODULE(_blastingpy_core, m) {
            "Limit of the curve at frequency_hz (Hz), in the units of the segments; undefined outside the curve.");
     cc.def("intersection_frequency", &intersection_frequency, nb::arg("velocity"), nb::arg("displacement"),
            "Frequency (Hz) where constant velocity and constant displacement meet: velocity / (2 pi displacement).");
+
+    nb::module_ wf = m.def_submodule("_waveform", "Waveform peaks and vector sum.");
+    nb::class_<Peak>(wf, "Peak", "Largest |x| (value >= 0) and the index of its first occurrence.")
+        .def_ro("value", &Peak::value)
+        .def_ro("index", &Peak::index);
+    wf.def("peak_abs", &peak_abs, nb::arg("x"), "Peak of one channel: max |x| and its first index.");
+    wf.def("vector_sum_peak", &vector_sum_peak, nb::arg("t"), nb::arg("v"), nb::arg("l"),
+           "Largest sqrt(t^2 + v^2 + l^2) computed sample by sample (true vector sum) and its index.");
+    wf.def("pseudo_vector_sum", &pseudo_vector_sum, nb::arg("peak_t"), nb::arg("peak_v"), nb::arg("peak_l"),
+           "Pseudo vector sum sqrt(peak_t^2 + peak_v^2 + peak_l^2); an upper bound of the true vector sum.");
 }

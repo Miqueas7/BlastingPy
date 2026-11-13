@@ -91,6 +91,7 @@ if(BLASTINGPY_BUILD_TESTS)
         tests/cpp/test_attenuation_fit.cpp
         tests/cpp/test_attenuation_inverse.cpp
         tests/cpp/test_criteria_curve.cpp
+        tests/cpp/test_waveform_peaks.cpp
     )
     target_link_libraries(blastingpy_tests PRIVATE
         blastingpy_core
