@@ -600,11 +600,12 @@ def read_instantel_ascii(path, *, sample_rate_hz: float | None = None, units: Ma
     * **THOR** (``"Key : Value"`` header lines, quotes optional, then ``Waveform Data Channels``,
       a row of channel names and one row per sample). Sample rate, units, pretrigger and start
       come from the header; the whole header goes to ``metadata``. ``format_evidence`` is
-      ``"third-party-parser"``.
+      ``"third-party-parser"``: built from a third-party parser's description, not validated against
+      a real file.
     * **Blastware with header** (double-quoted text lines), followed by a row of channel names and
       a table (tab, comma or spaces), or by one comma-separated line per channel (blocks). The
-      sample rate and units are searched in the header. Built from the manual only:
-      ``format_evidence`` is ``"manual-only"``.
+      sample rate and units are searched in the header. Built from the manual only, not validated
+      against a real file: ``format_evidence`` is ``"manual-only"``.
     * **Minimal**: a row of channel names (``Tran``, ``Vert``, ``Long``, ``MicL``) and one row per
       sample, with no metadata. ``format_evidence`` is ``"real-file"``.
 

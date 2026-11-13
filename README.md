@@ -7,8 +7,8 @@ The central use case: a blasting engineer ends a monitoring campaign with a tabl
 delay, PPV, frequency). BlastingPy fits the attenuation law of the site, computes the maximum charge per delay and
 checks the result against a regulatory criterion, stating the edition, table, magnitude and frequency method used.
 
-**Status:** in development, unpublished (version 0.1.0). Sprint 1 of 5 is complete: events table, attenuation law,
-maximum charge and compliance verdict. The package is not on PyPI and the repository is private.
+**Status:** in development, unpublished (version 0.1.0). Sprints 1 and 2 of 5 are complete: events table, attenuation law,
+maximum charge and compliance verdict, and reading seismograph records (waveform, PPV, vector sum, frequency). The package is not on PyPI and the repository is private.
 
 ## Install (from the repository)
 
@@ -17,7 +17,7 @@ python -m pip install ".[test,io,viz]"
 python -m pytest tests/python -q
 ```
 
-A C++ compiler and CMake are required to build from source. Extras: `io` (read and write `.xlsx`), `viz` (charts).
+A C++ compiler and CMake are required to build from source. Extras: `io` (read and write `.xlsx`), `viz` (charts), `seismic` (ObsPy readers).
 
 ## Example
 
@@ -39,6 +39,51 @@ plotting.plot_compliance(events, "USBM-RI8507-1980", "appendix-b-drywall")
 
 `write_events_template("events.csv")` writes the blank table. A complete, runnable version with synthetic data is in
 [examples/01-site-law-and-compliance](examples/01-site-law-and-compliance/).
+
+## From a seismograph record
+
+`blastingpy.io` reads the waveform a seismograph exports; `blastingpy.waveform` turns it into peaks, vector sum and
+frequency, and into a row of the events table of the sections above. The facts and their evidence are in
+[docs/investigacion/FUENTES_SPRINT2.md](docs/investigacion/FUENTES_SPRINT2.md).
+
+```python
+from blastingpy import attenuation, criteria, io, waveform
+
+records = [io.read_instantel_ascii(p, sample_rate_hz=1024, pretrigger_s=0.25) for p in paths]
+events = waveform.events_from_records(records, distance_m=[100, 150, 200], charge_kg=[20, 50, 30])
+law = attenuation.fit(events, law="sqrt")
+verdict = criteria.evaluate(events, "USBM-RI8507-1980", "appendix-b-drywall")
+```
+
+A complete, runnable version with synthetic data is in [examples/02-waveform-to-events](examples/02-waveform-to-events/).
+
+| Reader | `format_evidence` | Notes |
+|---|---|---|
+| `read_instantel_ascii`, minimal (`Tran Vert Long MicL` and rows) | `real-file` | No metadata: pass `sample_rate_hz` (and `pretrigger_s`). |
+| `read_instantel_ascii`, THOR | `third-party-parser` | **Not validated against a real file**: built from a third-party parser's description. |
+| `read_instantel_ascii`, Blastware with header (table or blocks) | `manual-only` | **Not validated against a real file**: built from the manual; the record carries a warning. |
+| `read_instantel_histogram` | `manual-only` | **Not validated against a real file**: built from the manual; returns a DataFrame with a warning in `attrs`. |
+| `read_waveform_csv` | `user` | Any mark or renamed channels (`columns=`, `sep="\t"`); scientific notation accepted. |
+| `read_obspy` (extra `seismic`) | `user` | miniSEED, SAC and other formats ObsPy reads. |
+
+A real export of each unvalidated format would settle it. Meanwhile, check the first record you read against what your
+seismograph's own software shows.
+
+- **The sample rate is never guessed.** If the file lacks it and you do not pass `sample_rate_hz`, the reader raises an
+  error. `read_waveform_csv` with a time column fits the rate by least squares and refuses a non-uniform column.
+- **Units.** Inside everything is SI (mm/s, Pa, s). Units are inferred from the resolution only for the Micromate and
+  Minimate Pro steps (0.00788 mm/s, 0.0156 Pa), with a warning; otherwise pass `units=`.
+- **Renamed channels** are not recognized by the Instantel readers: use `read_waveform_csv(..., columns=..., sep="\t")`.
+- **Zero-crossing frequency.** `analyze(zc_method="interpolated")` (default) interpolates the crossings; `"instantel"`
+  counts whole samples and flags a frequency above 100 fs / 1024 Hz. The frequency is NaN when the record edge cuts the
+  half cycle of the peak or, with `"instantel"`, above that limit. The verdict is then `not_comparable` against a
+  frequency-dependent curve, never a guess.
+- **Vector sum.** `pvs_mm_s` is the real vector sum (maximum of the sum of squares sample by sample); the pseudo vector
+  sum is the square root of the sum of the squares of the three component peaks, an upper bound of the real one.
+- **FFT.** `fft_frequency` takes the dominant frequency of the whole record and lists the peaks within 6 dB of the largest.
+- **Acceleration and displacement.** They depend on the precision of the exported file: with three significant figures or
+  fewer the summary warns. Displacement integrates each half cycle as the sum of V times the time step and halves the
+  largest, as the Instantel manual describes.
 
 ## Conventions
 
