@@ -333,11 +333,14 @@ def _parse_table(rows, n_fields: int, sep: str | None, decimal: str) -> list[np.
 # --------------------------------------------------------------------------- ASCII de Instantel
 # Formatos y evidencia: docs/investigacion/FUENTES_SPRINT2.md, «Formatos de exportación» (A, B, C).
 
-_THOR_KEYS = frozenset({"eventtype", "samplerate", "pretriggerlength", "eventdate", "eventtime", "units",
-                        "recordtime"})
+# Solo claves propias de THOR (README) cuentan para detectarlo: las genéricas (fs, unidades, fecha, hora) también
+# pueden venir en un encabezado de Blastware. Las genéricas igual se leen en un archivo THOR.
+_THOR_SPECIFIC_KEYS = frozenset({"eventtype", "pretriggerlength", "recordstopmode", "autostoptime", "geotriggerlevel",
+                                 "mictriggerlevel", "mictriggerleveldb", "georange", "micrange"})
 _KEY_VALUE = re.compile(r'^"?\s*([^":]+?)\s*:\s*(.*?)\s*"?$')
-_SPS = re.compile(r"(\d+(?:\.\d+)?)\s*sps\b", re.IGNORECASE)
-_SEC = re.compile(r"(\d+(?:\.\d+)?)\s*sec\b", re.IGNORECASE)
+# El número completo (con coma o punto) y sin dígitos pegados a la izquierda: «1,024 sps» no se lee como 24.
+_SPS = re.compile(r"(?<![\d.,])(\d+(?:[.,]\d+)?)\s*sps\b", re.IGNORECASE)
+_SEC = re.compile(r"(?<![\d.,])(\d+(?:[.,]\d+)?)\s*sec\b", re.IGNORECASE)
 _GEO_UNIT = re.compile(r"(?<![a-z/])(mm/s|in/s)(?![a-z/])", re.IGNORECASE)
 _MIC_UNIT = re.compile(r"(?<![a-z/])(pa|psi|db)(?![a-z/])", re.IGNORECASE)
 _TIME = re.compile(r"^(\d{1,2}):(\d{2}):(\d{2})(?::(\d{1,3}))?(?::(\d{1,3}))?\s*([AP]M)?$", re.IGNORECASE)
@@ -377,7 +380,7 @@ def _is_thor(lines) -> bool:
     keys = set()
     for _, s in lines:
         m = _KEY_VALUE.match(s)
-        if m and _normalize_key(m.group(1)) in _THOR_KEYS:
+        if m and _normalize_key(m.group(1)) in _THOR_SPECIFIC_KEYS:
             keys.add(_normalize_key(m.group(1)))
     return len(keys) >= 2
 
@@ -416,14 +419,25 @@ def _thor_start(date_text: str | None, time_text: str | None, warns: list[str]) 
         return None
 
 
-def _number_before(regex, key: str, text: str | None, warns: list[str]) -> float | None:
+def _header_number(number: str, key: str, text: str, decimal, warns: list[str]) -> float | None:
+    """A number taken from a header value; a comma counts as decimal mark only with ``decimal=","``."""
+    if "," in number:
+        if decimal != ",":
+            warns.append(f"{key} '{text}' has a comma in the number (decimal comma or thousands separator), "
+                         "ignored; pass decimal=\",\" if it is a decimal comma")
+            return None
+        number = number.replace(",", ".")
+    return float(number)
+
+
+def _number_before(regex, key: str, text: str | None, decimal, warns: list[str]) -> float | None:
     if text is None:
         return None
     m = regex.search(text)
     if m is None:
         warns.append(f"{key} '{text}' not understood, ignored")
         return None
-    return float(m[1])
+    return _header_number(m[1], key, text, decimal, warns)
 
 
 def _parse_thor(lines, decimal) -> _Parsed:
@@ -462,9 +476,10 @@ def _parse_thor(lines, decimal) -> _Parsed:
 
     units = _thor_units(by_key["units"], warns) if "units" in by_key else {}
     return _Parsed(names, columns, "instantel-thor", "third-party-parser",
-                   sample_rate_hz=_number_before(_SPS, "SampleRate", by_key.get("samplerate"), warns),
+                   sample_rate_hz=_number_before(_SPS, "SampleRate", by_key.get("samplerate"), decimal, warns),
                    units=units,
-                   pretrigger_s=_number_before(_SEC, "Pre-triggerLength", by_key.get("pretriggerlength"), warns),
+                   pretrigger_s=_number_before(_SEC, "Pre-triggerLength", by_key.get("pretriggerlength"), decimal,
+                                               warns),
                    start=_thor_start(by_key.get("eventdate"), by_key.get("eventtime"), warns),
                    metadata=meta, warnings=warns)
 
@@ -502,7 +517,8 @@ def _parse_blastware(lines, decimal) -> _Parsed:
     if not body:
         raise _param_error("path", "has a header but no waveform data")
 
-    rates = sorted({float(m) for t in texts for m in _SPS.findall(t)})
+    rates = sorted({r for t in texts for r in (_header_number(m, "sample rate", t, decimal, warns)
+                                                for m in _SPS.findall(t)) if r is not None})
     if len(rates) > 1:
         warns.append(f"header names two sample rates ({', '.join(f'{r:g}' for r in rates)} sps): ignored")
     units = {}

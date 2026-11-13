@@ -86,13 +86,42 @@ def test_thor_reads_channels_and_header(tmp_path):
 
 
 def test_thor_tolerant_without_quotes_or_marker(tmp_path):
-    header = [("Sample Rate", "1024 sps"), ("Units", "mm/s and pa"), ("Pre-trigger Length", "0.25 sec")]
+    header = [("Event Type", "Full Waveform"), ("Sample Rate", "1024 sps"), ("Units", "mm/s and pa"),
+              ("Pre-trigger Length", "0.25 sec")]
     rec = read_instantel_ascii(_write(tmp_path, _thor(header, quoted=False, marker=False)))
     _assert_signal(rec)
     assert rec.source == "instantel-thor"
     assert rec.sample_rate_hz == 1024.0
     assert rec.pretrigger_s == 0.25
     assert rec.metadata["Sample Rate"] == "1024 sps"
+
+
+def test_thor_without_marker_detected_by_two_specific_keys(tmp_path):
+    header = [("SampleRate", "1024 sps"), ("Units", "mm/s and pa"), ("Pre-triggerLength", "0.25 sec"),
+              ("GeoRange", "254.000 mm/s")]
+    rec = read_instantel_ascii(_write(tmp_path, _thor(header, marker=False)))
+    assert rec.source == "instantel-thor"
+    assert rec.format_evidence == "third-party-parser"
+    _assert_signal(rec)
+
+
+def test_thor_header_numbers_with_comma(tmp_path):
+    header = [(k, {"Pre-triggerLength": "0,25 sec", "SampleRate": "1,024 sps"}.get(k, v)) for k, v in THOR_HEADER]
+    path = _write(tmp_path, _thor(header))
+    with pytest.raises(ValueError, match="sample_rate_hz"):  # «1,024» no se lee como 24 ni como 1024
+        read_instantel_ascii(path)
+    rec = read_instantel_ascii(path, sample_rate_hz=1024)
+    assert rec.sample_rate_hz == 1024.0
+    assert rec.pretrigger_s is None  # «0,25» no se lee como 25
+    assert any("SampleRate" in w and "comma" in w for w in rec.warnings)
+    assert any("Pre-triggerLength" in w and "comma" in w for w in rec.warnings)
+
+
+def test_thor_header_decimal_comma_read_with_argument(tmp_path):
+    header = [(k, "0,25 sec" if k == "Pre-triggerLength" else v) for k, v in THOR_HEADER]
+    rec = read_instantel_ascii(_write(tmp_path, _thor(header)), decimal=",")
+    assert rec.pretrigger_s == 0.25
+    _assert_signal(rec)
 
 
 def test_thor_key_without_space_before_colon(tmp_path):
@@ -241,6 +270,25 @@ def test_blastware_two_geophone_units_give_no_header_unit(tmp_path):
     rec = read_instantel_ascii(path, units={"geophone": "in/s"})  # no hay conflicto: el encabezado no decide
     assert any("geophone" in w and "mm/s" in w and "in/s" in w for w in rec.warnings)
     _assert_signal(rec, scale={"transverse": 25.4, "vertical": 25.4, "longitudinal": 25.4})
+
+
+COLON_HEADER = ["Sample Rate: 1024 sps", "Units: mm/s and pa", "Event Date: 2026-01-15", "Event Time: 10:20:30"]
+
+
+@pytest.mark.parametrize("layout", ["table", "blocks"])
+def test_blastware_colon_header_is_not_thor(tmp_path, layout):
+    body = "\t".join(NAMES) + "\n" + _rows() if layout == "table" else _blocks()
+    rec = read_instantel_ascii(_write(tmp_path, _blastware_header(COLON_HEADER) + body))
+    assert rec.source == f"instantel-blastware-{layout}"
+    assert rec.format_evidence == "manual-only"
+    assert rec.sample_rate_hz == 1024.0
+    _assert_signal(rec)
+
+
+def test_blastware_sample_rate_with_comma_is_ignored(tmp_path):
+    text = _blastware_header(["Sample Rate 16,384 sps", "Geophone mm/s Microphone Pa"]) + _blocks()
+    with pytest.raises(ValueError, match="sample_rate_hz"):
+        read_instantel_ascii(_write(tmp_path, text))
 
 
 def test_blastware_without_sample_rate_needs_argument(tmp_path):
