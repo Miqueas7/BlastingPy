@@ -155,6 +155,18 @@ def test_recorded_value_with_its_own_frequency_is_evaluated():
     assert r.status == "complies" and r.limit_mm_s == pytest.approx(20.0) and r.governing == "segment-1"
 
 
+def test_vertical_value_is_checked_at_every_frequency_of_its_group():
+    p, c = "USBM-RI8507-1980", "appendix-b-drywall"
+    tl = dict(ppv_t_mm_s=5.0, freq_t_hz=10.0, ppv_l_mm_s=5.0, freq_l_hz=10.0)
+    ev = dict(ppv_kind="vertical", ppv_mm_s=20.0, frequency_hz=4.0, **tl)
+    assert evaluate(_ev(**ev), p, c).iloc[0].status == "exceeds"
+    r = evaluate(_ev(**ev, freq_v_hz=50.0), p, c).iloc[0]  # agregar freq_v_hz no puede volverlo «cumple»
+    assert r.status == "exceeds" and r.governing == "vertical/segment-1"
+    ev = dict(ppv_kind="vertical", ppv_mm_s=20.0, freq_v_hz=4.0, frequency_hz=50.0, **tl)
+    assert evaluate(_ev(**ev), p, c).iloc[0].status == "exceeds"
+    assert evaluate(_ev(**ev, ppv_v_mm_s=18.0), p, c).iloc[0].status == "exceeds"
+
+
 def test_vector_sum_and_vertical_profiles_evaluate_both_values():
     for quantity, column in [("vector_sum", "pvs_mm_s"), ("vertical", "ppv_v_mm_s")]:
         user = {"profile_id": "U", "quantity": quantity, "units": {"velocity": "mm/s"},
