@@ -6,6 +6,12 @@ optional ``frequency_hz``, ``date``, ``point``, ``ppv_t_mm_s``, ``ppv_v_mm_s``, 
 ``freq_v_hz``, ``freq_l_hz``, ``pvs_mm_s``. Other columns of the file are dropped. Distances, charges and velocities are
 converted to m, kg and mm/s; frequencies are Hz and never converted; ``date`` and ``point`` are kept as read.
 
+Decimal mark, when ``decimal`` is None: in a ``;`` CSV it is the comma (a point is a thousands mark there and is
+rejected); in a ``,`` CSV it is the point (a comma inside a quoted number is a thousands mark and is rejected); tab CSVs,
+Excel cells stored as text and DataFrame string cells accept either mark, except the shape ``1,250`` / ``1.250`` (one to
+three digits, a mark, three digits), which could be a decimal or a thousands mark and is rejected as ambiguous. Every
+rejected cell names its column and row and asks for ``decimal=``.
+
 Row handling: a row with every mapped cell empty is skipped silently; a row with an empty PPV is skipped and counted in a
 single ``UserWarning``; a row with a PPV but no distance or charge is a ``ValueError``. Cells listed in ``na_values``
 count as empty. Row numbers in errors are the ones the user sees in the sheet (header = 1), or ``row index N`` (position)
@@ -43,8 +49,10 @@ _QUANTITY = {"distance_m": "distance", "charge_kg": "charge", "ppv_mm_s": "veloc
              "ppv_v_mm_s": "velocity", "ppv_l_mm_s": "velocity", "pvs_mm_s": "velocity"}
 _NUMBER = {None: re.compile(r"^-?\d+([.,]\d+)?$"), ",": re.compile(r"^-?\d+(,\d+)?$"),
            ".": re.compile(r"^-?\d+(\.\d+)?$")}
+# Donde se aceptan las dos marcas, "1,250" o "1.250" puede ser 1.25 o 1250: se rechaza y se pide decimal=.
+_AMBIGUOUS = re.compile(r"^-?[1-9]\d{0,2}[.,]\d{3}$")
 _PREFIX = "Domain error [BlastingPy]"
-_IO_HINT = "reading or writing .xlsx files needs openpyxl: pip install blastingpy[io]"
+_IO_HINT = "openpyxl is required to read or write .xlsx files: pip install blastingpy[io]"
 
 
 def _param_error(name: str, message: str) -> ValueError:
@@ -55,7 +63,7 @@ def _require_openpyxl() -> None:
     try:
         import openpyxl  # noqa: F401
     except ImportError:
-        raise ImportError(f"{_PREFIX}: {_IO_HINT}") from None
+        raise ImportError(_IO_HINT) from None
 
 
 def _unit_names(units) -> dict[str, str]:
@@ -90,6 +98,9 @@ def _check_arguments(columns, ppv_kind, decimal) -> None:
         raise _param_error("ppv_kind", f"must be one of {list(_KINDS)}. Received: {ppv_kind!r}")
     if "ppv_kind" not in columns and ppv_kind is None:
         raise _param_error("ppv_kind", f"is required when 'columns' has no 'ppv_kind' column. One of {list(_KINDS)}")
+    if "ppv_kind" in columns and ppv_kind is not None:
+        raise _param_error("ppv_kind", f"is given as an argument ({ppv_kind!r}) and as the column "
+                                       f"{columns['ppv_kind']!r}; pass only one of them")
     if decimal not in _NUMBER:
         raise _param_error("decimal", f"must be ',' or '.'. Received: {decimal!r}")
 
@@ -108,7 +119,7 @@ def _read_csv(source, sep) -> tuple[pd.DataFrame, str]:
     text = _decode(source)
     if sep is None:
         header = text.splitlines()[0] if text.strip() else ""
-        sep = max((";", ",", "	"), key=header.count)
+        sep = max((";", ",", "\t"), key=header.count)
     lines = list(csv.reader(io.StringIO(text), delimiter=sep))
     names = lines[0] if lines else []
     rows = []
@@ -168,20 +179,26 @@ def read_events(source, *, columns: dict[str, str], units: str | dict[str, str] 
     ``columns`` maps canonical names (``distance_m``, ``charge_kg`` and ``ppv_mm_s`` are required) to the column names of
     the file. ``units`` is ``"metric"`` (m, kg, mm/s), ``"imperial"`` (ft, lb, in/s) or a dict with any of the keys
     ``distance`` (``m``/``ft``), ``charge`` (``kg``/``lb``) and ``velocity`` (``mm/s``/``in/s``); missing keys are metric.
-    ``ppv_kind`` applies to the whole table unless ``columns`` maps a ``ppv_kind`` column. ``sep`` (CSV, detected from the
-    header line when ``None``) and ``decimal`` (``","`` or ``"."``) override the detection. With ``None``, a ``;``
-    CSV uses the comma (a point is a thousands mark there and is rejected) and other sources accept both.
-    Excel numbers stored as text are converted. See the module docstring for the row handling.
+    ``ppv_kind`` applies to the whole table; give it either as this argument or as a mapped ``ppv_kind`` column, not
+    both. ``sep`` (CSV, detected from the header line when ``None``) and ``decimal`` (``","`` or ``"."``) override the
+    detection; with ``decimal=None`` the mark follows the rules in the module docstring. Excel numbers stored as text are
+    converted. A mapped column whose name appears twice in the header is an error. See the module docstring for the row
+    handling.
     """
     _check_arguments(columns, ppv_kind, decimal)
     unit_names = _unit_names(units)
     table, sep = _load(source, sheet, sep)
     if sep == ";" and decimal is None:
         decimal = ","  # con ";" el punto es marca de miles (1.250 = 1250): nunca se lee como decimal
+    elif sep == "," and decimal is None:
+        decimal = "."  # con "," la coma es marca de miles ("1,250" = 1250): nunca se lee como decimal
     for canonical, name in columns.items():
         if name not in table.columns:
             raise _param_error("columns", f"maps {canonical!r} to {name!r}, which is not in the file. "
                                           f"Available columns: {[str(c) for c in table.columns]}")
+        if (table.columns == name).sum() > 1:
+            raise _param_error("source", f"has the column {name!r} twice in its header; the column mapped to "
+                                         f"{canonical!r} must be unique")
     names = {c: columns[c] for c in _ORDER if c in columns}
     na_values = tuple(na_values)
     is_file = not isinstance(source, pd.DataFrame)
@@ -229,7 +246,11 @@ def read_events(source, *, columns: dict[str, str], units: str | dict[str, str] 
                         raise cell_error(canonical, i, "the cell is empty but the row has a PPV")
                     values.append(np.nan)
                     continue
-                number = _number(cells[canonical][i], decimal)
+                cell = cells[canonical][i]
+                if decimal is None and isinstance(cell, str) and _AMBIGUOUS.match(cell.strip()):
+                    raise cell_error(canonical, i, f"{cell.strip()!r} is ambiguous: the mark may be a decimal or a "
+                                                   f"thousands separator. Pass decimal=',' or '.'")
+                number = _number(cell, decimal)
                 if number is None or not np.isfinite(number):
                     raise cell_error(canonical, i, f"expected a number, received {cells[canonical][i]!r}. "
                                                 f"If the decimal mark is not what you expect, pass decimal=',' or '.'")

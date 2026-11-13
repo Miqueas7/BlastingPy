@@ -38,8 +38,8 @@ def test_semicolon_and_decimal_comma(tmp_path):
 
 
 def test_comma_separator_bom_and_quoted_decimal_comma(tmp_path):
-    p = _csv(tmp_path, '﻿Dist,Carga,PPV\n"120,5",45,3.2\n', encoding="utf-8")
-    df = read_events(p, columns=COLS, ppv_kind="vertical")
+    p = _csv(tmp_path, '\ufeffDist,Carga,PPV\n"120,5",45,"3,2"\n', encoding="utf-8")
+    df = read_events(p, columns=COLS, ppv_kind="vertical", decimal=",")
     assert df["distance_m"].tolist() == [120.5] and df["ppv_mm_s"].tolist() == [3.2]
 
 
@@ -229,8 +229,8 @@ def test_rows_with_a_different_field_count_are_errors(tmp_path, sep):
 
 
 def test_quoted_fields_count_as_one_field(tmp_path):
-    p = _csv(tmp_path, 'Dist,Carga,PPV\n"120,5",45,3.2\n')
-    assert read_events(p, columns=COLS, ppv_kind="vertical")["distance_m"].tolist() == [120.5]
+    p = _csv(tmp_path, 'Dist,Carga,PPV\n"120,5",45,"3,2"\n')
+    assert read_events(p, columns=COLS, ppv_kind="vertical", decimal=",")["distance_m"].tolist() == [120.5]
 
 
 def test_row_numbers_after_blank_empty_and_skipped_rows_csv(tmp_path):
@@ -253,3 +253,62 @@ def test_dataframe_source_is_not_modified(tmp_path):
     first = read_events(src, columns=COLS, units="imperial", ppv_kind="vertical")
     assert src.equals(before)
     assert read_events(src, columns=COLS, units="imperial", ppv_kind="vertical").equals(first)
+
+
+def test_comma_file_uses_the_decimal_point(tmp_path):
+    # Con "," la coma es separador de campo y de miles: "1,250" entre comillas se leía 1.25 sin aviso.
+    for bad in ('"1,250"', '"120,5"'):
+        p = _csv(tmp_path, f"Dist,Carga,PPV\n100,20,{bad}\n", name="c.csv")
+        with pytest.raises(ValueError, match=r"column 'PPV' \(ppv_mm_s\), row 2.*decimal="):
+            read_events(p, columns=COLS, ppv_kind="vertical")
+        with pytest.raises(ValueError, match=r"column 'PPV' \(ppv_mm_s\), row 2.*decimal="):
+            read_events(p, columns=COLS, ppv_kind="vertical", sep=",")
+    p = _csv(tmp_path, 'Dist,Carga,PPV\n100,20,"1,250"\n', name="d.csv")
+    assert read_events(p, columns=COLS, ppv_kind="vertical", decimal=",")["ppv_mm_s"].tolist() == [1.25]
+
+
+@pytest.mark.parametrize("text, decimal, value", [("1,250", ",", 1.25), ("1.250", ".", 1.25),
+                                                  ("12.500", ".", 12.5), ("100,000", ",", 100.0)])
+def test_ambiguous_thousands_shape_is_rejected_where_both_marks_are_accepted(tmp_path, text, decimal, value):
+    # Tabulador, celdas de texto de Excel y de un DataFrame aceptan las dos marcas, salvo la forma de miles.
+    message = rf"column 'PPV' \(ppv_mm_s\), row 2: {text!r} is ambiguous.*decimal="
+    p = _csv(tmp_path, f"Dist\tCarga\tPPV\n100\t20\t{text}\n", name="t.csv")
+    with pytest.raises(ValueError, match=message):
+        read_events(p, columns=COLS, ppv_kind="vertical")
+    x = _xlsx(tmp_path, [(100, 20, text)])
+    with pytest.raises(ValueError, match=message):
+        read_events(x, columns=COLS, ppv_kind="vertical")
+    src = pd.DataFrame({"Dist": [100.0], "Carga": [20.0], "PPV": [text]})
+    with pytest.raises(ValueError, match=rf"column 'PPV' \(ppv_mm_s\), row index 0: {text!r} is ambiguous"):
+        read_events(src, columns=COLS, ppv_kind="vertical")
+    for source in (p, x, src):
+        assert read_events(source, columns=COLS, ppv_kind="vertical", decimal=decimal)["ppv_mm_s"].tolist() == [value]
+
+
+def test_unambiguous_marks_are_still_accepted_where_both_are(tmp_path):
+    p = _csv(tmp_path, "Dist\tCarga\tPPV\n100\t20\t0,850\n120,5\t20\t12.5\n1250\t20\t1.2500\n", name="t.csv")
+    df = read_events(p, columns=COLS, ppv_kind="vertical")
+    assert df["ppv_mm_s"].tolist() == [0.85, 12.5, 1.25] and df["distance_m"].tolist() == [100.0, 120.5, 1250.0]
+
+
+def test_ppv_kind_as_argument_and_column_is_an_error(tmp_path):
+    p = _csv(tmp_path, "Dist;Carga;PPV;Tipo\n100;10;1;vertical\n")
+    with pytest.raises(ValueError, match=r"parameter 'ppv_kind'.*'Tipo'"):
+        read_events(p, columns={**COLS, "ppv_kind": "Tipo"}, ppv_kind="vector_sum")
+
+
+def test_duplicated_header_is_a_domain_error(tmp_path):
+    p = _csv(tmp_path, "Dist;Carga;PPV;PPV\n100;10;1;2\n")
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter 'source'.*'PPV'.*twice"):
+        read_events(p, columns=COLS, ppv_kind="vertical")
+    # Un encabezado repetido que no se mapea (p. ej. columnas vacías al final) no estorba.
+    p = _csv(tmp_path, "Dist;Carga;PPV;;\n100;10;1;;\n", name="g.csv")
+    assert read_events(p, columns=COLS, ppv_kind="vertical")["ppv_mm_s"].tolist() == [1.0]
+
+
+def test_missing_openpyxl_is_not_a_domain_error(tmp_path, monkeypatch):
+    p = _xlsx(tmp_path, [(1, 1, 1)])
+    monkeypatch.setitem(sys.modules, "openpyxl", None)
+    with pytest.raises(ImportError) as info:
+        read_events(p, columns=COLS, ppv_kind="vertical")
+    assert not str(info.value).startswith("Domain error") and "openpyxl" in str(info.value)
