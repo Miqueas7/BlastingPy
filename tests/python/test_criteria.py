@@ -418,7 +418,21 @@ def test_shipped_profiles_schema():
         assert set(data["name"]) == {"en", "es"}
         for c in data["criteria"]:
             assert c["verification"] in {"V1", "V2"} and c["reference"]
+            assert set(c["note"]) == {"en", "es"} and all(c["note"].values()), (data["profile_id"], c["id"])
         assert load_profile(data["profile_id"]).profile_id == data["profile_id"]
+    bs = load_profile("BS-7385-2-1993")
+    assert set(bs.source["note"]) == {"en", "es"} and "final draft" in bs.source["note"]["en"]
+    assert "borrador final" in bs.criteria["line-1"].note["es"]
+
+
+def test_criterion_note_is_text_or_bilingual():
+    for note in ("Clause 4", {"en": "Clause 4", "es": "Cláusula 4"}):
+        profile = _flat(10.0)
+        profile["criteria"][0]["note"] = note
+        assert load_profile(profile).criteria["f"].note == note
+    profile["criteria"][0]["note"] = 4
+    with pytest.raises(ValueError, match=r"\(profile 'U', criterion 'f'\) 'note' must be"):
+        load_profile(profile)
 
 
 def _limit(profile, criterion, f):

@@ -94,7 +94,7 @@ class Criterion:
     structure: dict
     verification: str
     reference: str
-    note: str
+    note: str | dict  # como en el JSON: texto o {"en": ..., "es": ...}
     segments: tuple = ()
     rows: tuple = ()
     limit_mm_s: float = math.nan
@@ -220,10 +220,14 @@ def _criterion(raw: dict, units: dict, user: bool, profile_id) -> Criterion:
     kind = _key(raw, "kind", where)
     if kind not in _KINDS:
         raise _error("profile", f"{where}has an unknown kind {kind!r}. Valid kinds: {list(_KINDS)}")
+    note = raw.get("note", "")
+    if not (isinstance(note, str) or (isinstance(note, dict) and all(isinstance(v, str) for v in note.values()))):
+        raise _error("profile", f"{where}'note' must be a text or a dict of texts by language "
+                                f"({{'en': ..., 'es': ...}}). Received: {note!r}")
     fields = dict(criterion_id=cid, kind=kind, structure=raw.get("structure", {}),
                   verification="user" if user else _key(raw, "verification", where),
                   reference=raw.get("reference", "") if user else _key(raw, "reference", where),
-                  note=raw.get("note", ""))
+                  note=note)
     if kind == "frequency_curve":
         fields["segments"] = _segments(_key(raw, "segments", where), units, where)
     elif kind == "distance_table":

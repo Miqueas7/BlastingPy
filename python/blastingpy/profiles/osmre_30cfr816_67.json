@@ -23,7 +23,10 @@
       "structure": {"en": "Structures near the blast", "es": "Estructuras cercanas a la voladura"},
       "verification": "V1",
       "reference": "30 CFR 816.67(d)(2)(i) table and (d)(3)(i); annual edition 1-Jul-2023, pp. 308-309",
-      "note": "Interpretation: a row applies to d <= d_max (the rule reads '0 to 300' and '301 to 5,000' ft and says nothing for distances between 300 and 301 ft). W = (D/Ds)^2 is the charge in lb detonated in any 8 ms period, D in ft ((d)(3)(i)). A modified Ds needs site seismograph records and must keep the limit at a 95-percent confidence level ((d)(3)(ii)). The Figure 1 alternative (limits by frequency) is not included: its ~11 Hz breakpoint is not labelled and the source does not say how its segments join.",
+      "note": {
+        "en": "Interpretation: a row applies to d <= d_max (the rule reads '0 to 300' and '301 to 5,000' ft and says nothing for distances between 300 and 301 ft). W = (D/Ds)^2 is the charge in lb detonated in any 8 ms period, D in ft ((d)(3)(i)). A modified Ds needs site seismograph records and must keep the limit at a 95-percent confidence level ((d)(3)(ii)). The Figure 1 alternative (limits by frequency) is not included: its ~11 Hz breakpoint is not labelled and the source does not say how its segments join.",
+        "es": "Interpretación: una fila rige para d <= d_max (la regla dice '0 to 300' y '301 to 5,000' ft y no dice nada de las distancias entre 300 y 301 ft). W = (D/Ds)^2 es la carga en lb detonada en cualquier periodo de 8 ms, con D en ft ((d)(3)(i)). Un Ds modificado necesita registros de sismógrafo del sitio y debe mantener el límite con un nivel de confianza del 95 % ((d)(3)(ii)). La alternativa de la Figura 1 (límites por frecuencia) no entra: su quiebre de ~11 Hz no está rotulado y la fuente no dice cómo se unen sus tramos."
+      },
       "rows": [
         {"d_max": 300, "limit": 1.25, "scaled_distance": 50},
         {"d_max": 5000, "limit": 1.00, "scaled_distance": 55},

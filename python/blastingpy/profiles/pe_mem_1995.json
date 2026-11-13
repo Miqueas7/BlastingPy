@@ -23,7 +23,10 @@
       "structure": {"en": "Structures near the blast (table copied from 30 CFR 816.67)", "es": "Estructuras cercanas a la voladura (cuadro tomado de 30 CFR 816.67)"},
       "verification": "V1",
       "reference": "Table 'Velocidad máxima partícula pico', p. 33 (PDF p. 23)",
-      "note": "Interpretation: a row applies to d <= d_max (the guide reads '0 a 300' and '301 a 5000' ft). W = (D/Ds)^2 is the charge in lb detonated in any 8 ms period, D in ft. A modified Ds must keep the predicted velocity within the table (pp. 33-34); unlike the federal rule, the guide does not state a 95 % confidence level.",
+      "note": {
+        "en": "Interpretation: a row applies to d <= d_max (the guide reads '0 a 300' and '301 a 5000' ft). W = (D/Ds)^2 is the charge in lb detonated in any 8 ms period, D in ft. A modified Ds must keep the predicted velocity within the table (pp. 33-34); unlike the federal rule, the guide does not state a 95 % confidence level.",
+        "es": "Interpretación: una fila rige para d <= d_max (la guía dice '0 a 300' y '301 a 5000' ft). W = (D/Ds)^2 es la carga en lb detonada en cualquier periodo de 8 ms, con D en ft. Un Ds modificado debe mantener la velocidad predicha dentro de la tabla (pp. 33-34); a diferencia de la regla federal, la guía no fija un nivel de confianza del 95 %."
+      },
       "rows": [
         {"d_max": 300, "limit": 1.25, "scaled_distance": 50},
         {"d_max": 5000, "limit": 1.00, "scaled_distance": 55},
