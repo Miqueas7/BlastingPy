@@ -142,4 +142,21 @@ NB_MODULE(_blastingpy_core, m) {
            "Largest sqrt(t^2 + v^2 + l^2) computed sample by sample (true vector sum) and its index.");
     wf.def("pseudo_vector_sum", &pseudo_vector_sum, nb::arg("peak_t"), nb::arg("peak_v"), nb::arg("peak_l"),
            "Pseudo vector sum sqrt(peak_t^2 + peak_v^2 + peak_l^2); an upper bound of the true vector sum.");
+    nb::enum_<ZcMethod>(wf, "ZcMethod", "How the half period is measured.")
+        .value("WholeSamples", ZcMethod::WholeSamples, "Count whole samples of the peak's sign (Instantel-like)")
+        .value("Interpolated", ZcMethod::Interpolated, "Linearly interpolate both zero crossings (no limit)");
+    nb::enum_<ZcStatus>(wf, "ZcStatus", "Outcome of the zero-crossing frequency.")
+        .value("Ok", ZcStatus::Ok)
+        .value("AboveLimit", ZcStatus::AboveLimit, "Whole-sample frequency above the Instantel limit")
+        .value("Incomplete", ZcStatus::Incomplete, "A zero crossing is missing (record cut); values are NaN")
+        .value("NotComputable", ZcStatus::NotComputable, "The peak sample is zero; values are NaN");
+    nb::class_<ZcFrequency>(wf, "ZcFrequency", "Zero-crossing frequency (Hz), half period (s) and status.")
+        .def_ro("frequency_hz", &ZcFrequency::frequency_hz)
+        .def_ro("half_period_s", &ZcFrequency::half_period_s)
+        .def_ro("status", &ZcFrequency::status);
+    wf.def("instantel_zc_limit_hz", &instantel_zc_limit_hz, nb::arg("sample_rate_hz"),
+           "Instantel display limit of the zero-crossing frequency: 100 * fs / 1024 Hz.");
+    wf.def("zero_crossing_frequency", &zero_crossing_frequency, nb::arg("x"), nb::arg("sample_rate_hz"),
+           nb::arg("peak_index"), nb::arg("method"),
+           "Frequency 1 / (2 T) of the half cycle containing x[peak_index], between its zero crossings.");
 }
