@@ -9,15 +9,24 @@ to ``d <= d_max``; ``d_max`` null is the open last row) and ``flat`` (one limit)
 
 Verdict of :func:`evaluate`, one row per event:
 
-An event gives one or more candidate PPVs of the quantity the profile asks for (never another quantity). With
-``quantity == "component_max"`` each component column present (``ppv_t/v/l_mm_s``) is a candidate with its own frequency
-(``freq_t/v/l_hz``); when ``ppv_kind == "component_max"``, ``ppv_mm_s`` is one more candidate (with ``frequency_hz``) if
-no component is present or it is larger than every component present. A candidate complies when
-``ppv <= limit * (1 + 1e-9)`` (equality complies). The status, in this order:
+An event gives one or more candidate PPVs of the quantity the profile asks for (never another quantity), and it complies
+only when that quantity is fully known:
+
+* ``quantity == "component_max"``: each component column present (``ppv_t/v/l_mm_s``) is a candidate with its own
+  frequency (``freq_t/v/l_hz``). With ``ppv_kind == "vertical"`` and no ``ppv_v_mm_s``, ``ppv_mm_s`` is the vertical
+  component (``freq_v_hz``, else ``frequency_hz``). With ``ppv_kind == "component_max"``, ``ppv_mm_s`` is one more
+  candidate (with ``frequency_hz``) if no component is present or it is larger than every component present. A
+  ``vector_sum`` ``ppv_mm_s`` is never a candidate here. The maximum component is known only when the three components
+  are present or ``ppv_kind == "component_max"`` with a valid ``ppv_mm_s``; otherwise the missing components count as
+  a candidate that could not be evaluated.
+* ``quantity == "vector_sum"`` / ``"vertical"``: ``pvs_mm_s`` / ``ppv_v_mm_s`` if present, and ``ppv_mm_s`` if
+  ``ppv_kind`` is that quantity; both are evaluated when both are present.
+
+A candidate complies when ``ppv <= limit * (1 + 1e-9)`` (equality complies). The status, in this order:
 
 * ``exceeds`` if any candidate that could be evaluated exceeds its limit (``reason`` lists the ones not evaluated);
-* ``not_comparable`` if any candidate could not be evaluated: the quantity is missing, a PPV is not finite and > 0, a
-  frequency curve has no frequency, or a distance table has no distance;
+* ``not_comparable`` if any candidate could not be evaluated: the quantity is missing or incomplete, a PPV is not finite
+  and > 0, a frequency curve has no frequency, or a distance table has no distance;
 * ``indeterminate`` if any candidate's frequency or distance is outside the criterion's domain;
 * ``complies`` otherwise: every candidate was evaluated and complies.
 
@@ -278,26 +287,35 @@ def _magnitudes(row: dict, quantity: str) -> tuple[list, list]:
     """Candidates [(component label, ppv, frequency, frequency column)] and the problems that block comparing."""
     kind, problems, candidates = row.get("ppv_kind"), [], []
     if quantity == "component_max":
+        absent = []
         for label, p, f in _COMPONENTS:
+            if math.isnan(_value(row, p)) and label == "vertical" and kind == "vertical":
+                p = "ppv_mm_s"  # el PPV del evento es la componente vertical
+                f = "freq_v_hz" if not math.isnan(_value(row, "freq_v_hz")) else "frequency_hz"
             value = _ppv(row, p, problems)
             if not math.isnan(value):
                 candidates.append((label, value, _value(row, f), f))
+            elif math.isnan(_value(row, p)):
+                absent.append(label)
+        complete = not absent
         if kind == "component_max":
             peak = _ppv(row, "ppv_mm_s", problems)
             top = max((cand[1] for cand in candidates), default=0.0)
+            complete = complete or not math.isnan(peak)
             # El pico registrado también se evalúa si supera a las componentes presentes (pueden faltar algunas).
             if not math.isnan(peak) and peak > top * (1 + _REL_TOL):
                 candidates.append(("", peak, _value(row, "frequency_hz"), "frequency_hz"))
+        if candidates and not complete:  # solo se cumple si se conoce la componente máxima
+            problems.append(f"missing components: {', '.join(absent)}")
         missing = (f"the profile needs the peak component PPV (ppv_kind 'component_max' or columns "
                    f"ppv_t/v/l_mm_s); the event has ppv_kind {kind!r}")
     else:
         column, freq = ("pvs_mm_s", "frequency_hz") if quantity == "vector_sum" else ("ppv_v_mm_s", "freq_v_hz")
-        value = _ppv(row, column, problems)
-        if math.isnan(value) and kind == quantity and not problems:  # el PPV del evento ya es la magnitud pedida
-            column, freq = "ppv_mm_s", "frequency_hz"
-            value = _ppv(row, column, problems)
-        if not math.isnan(value):
-            candidates.append(("", value, _value(row, freq), freq))
+        sources = [(column, freq)] + ([("ppv_mm_s", "frequency_hz")] if kind == quantity else [])
+        for p, f in sources:  # ambos se evalúan si están los dos
+            value = _ppv(row, p, problems)
+            if not math.isnan(value):
+                candidates.append(("", value, _value(row, f), f))
         missing = f"the profile needs {column} (or ppv_kind {quantity!r}); the event has ppv_kind {kind!r}"
     if not candidates and not problems:
         problems.append("ppv_mm_s is empty" if kind == quantity else missing)

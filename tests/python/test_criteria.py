@@ -106,6 +106,43 @@ def test_recorded_peak_above_the_components_present_is_evaluated():
     assert r.status == "complies" and r.governing == "segment-1"
 
 
+def test_complies_only_when_the_maximum_component_is_known():
+    p, c, t = "USBM-RI8507-1980", "appendix-b-drywall", "OSMRE-30CFR816.67"
+    # ppv_kind vertical: ppv_mm_s es la componente vertical (con frequency_hz si no hay freq_v_hz).
+    ev = _ev(ppv_kind="vertical", ppv_mm_s=30.0, ppv_t_mm_s=10.0, freq_t_hz=10.0)
+    r = evaluate(ev, p, c).iloc[0]
+    assert r.status == "exceeds" and r.governing == "vertical/segment-1" and "longitudinal" in r.reason
+    r = evaluate(ev, t, "distance-table").iloc[0]
+    assert r.status == "exceeds" and r.governing == "vertical/row-1"
+    # ppv_kind vector_sum nunca es candidato de component_max; faltan dos componentes.
+    r = evaluate(_ev(ppv_kind="vector_sum", ppv_mm_s=40.0, ppv_t_mm_s=10.0, freq_t_hz=10.0), p, c).iloc[0]
+    assert r.status == "not_comparable" and "missing components: vertical, longitudinal" in r.reason
+    # Una componente y la vertical por ppv_mm_s, ambas cumplen: falta la longitudinal.
+    r = evaluate(_ev(ppv_kind="vertical", ppv_mm_s=12.0, ppv_t_mm_s=10.0, freq_t_hz=10.0), p, c).iloc[0]
+    assert r.status == "not_comparable" and "missing components: longitudinal" in r.reason
+    # Una componente que excede, las demás faltan: excede y el reason dice cuáles faltan.
+    r = evaluate(_ev(ppv_kind="vector_sum", ppv_t_mm_s=30.0, freq_t_hz=10.0), p, c).iloc[0]
+    assert r.status == "exceeds" and r.governing == "transverse/segment-1"
+    assert "missing components: vertical, longitudinal" in r.reason
+    # Tres componentes con ppv_kind vector_sum: se evalúan las componentes.
+    full = dict(ppv_kind="vector_sum", ppv_mm_s=40.0, ppv_t_mm_s=10.0, freq_t_hz=10.0, ppv_v_mm_s=15.0,
+                freq_v_hz=50.0, ppv_l_mm_s=12.0, freq_l_hz=10.0)
+    r = evaluate(_ev(**full), p, c).iloc[0]
+    assert r.status == "complies" and r.governing == "longitudinal/segment-1"
+    r = evaluate(_ev(**{**full, "ppv_l_mm_s": 20.0}), p, c).iloc[0]
+    assert r.status == "exceeds" and r.governing == "longitudinal/segment-1"
+
+
+def test_vector_sum_and_vertical_profiles_evaluate_both_values():
+    for quantity, column in [("vector_sum", "pvs_mm_s"), ("vertical", "ppv_v_mm_s")]:
+        user = {"profile_id": "U", "quantity": quantity, "units": {"velocity": "mm/s"},
+                "criteria": [{"id": "f", "kind": "flat", "limit": 20.0}]}
+        r = evaluate(_ev(ppv_kind=quantity, ppv_mm_s=30.0, **{column: 10.0}), user, "f").iloc[0]
+        assert r.status == "exceeds" and r.margin_mm_s == pytest.approx(-10.0)
+        r = evaluate(_ev(ppv_kind=quantity, ppv_mm_s=15.0, **{column: 10.0}), user, "f").iloc[0]
+        assert r.status == "complies" and r.margin_mm_s == pytest.approx(5.0)
+
+
 def test_bad_ppv_values_are_not_comparable():
     p, c = "USBM-RI8507-1980", "appendix-b-drywall"
     r = evaluate(_ev(ppv_t_mm_s=-30.0, ppv_v_mm_s=5.0, freq_v_hz=10.0), p, c).iloc[0]
