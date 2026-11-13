@@ -95,6 +95,17 @@ def test_fit_rejects_unknown_law_and_missing_column():
         att.fit(_events().drop(columns="charge_kg"))
 
 
+def test_fit_refuses_to_pool_different_ppv_kinds():
+    # Una ley ajustada con PPV vertical no puede invertirse contra un límite de componente máxima sin decirlo.
+    df = _events()
+    df["ppv_kind"] = ["vertical"] * 6 + ["vector_sum"] * 6
+    with pytest.raises(ValueError, match=r"parameter 'events'.*'vector_sum'.*'vertical'"):
+        att.fit(df)
+    df["ppv_kind"] = "vertical"
+    assert att.fit(df).beta == pytest.approx(1.6)
+    assert "quantity it was fitted on" in att.fit.__doc__
+
+
 @pytest.mark.parametrize("law", ["sqrt", "cbrt", "general"])
 def test_round_trip_in_python(law):
     f = att.fit(_events(), law=law)

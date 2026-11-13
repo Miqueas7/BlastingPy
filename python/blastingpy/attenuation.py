@@ -16,6 +16,7 @@ Conventions
   ``max_charge`` and ``distance_for_ppv`` refuse it with a ``ValueError``.
 * Predictions return a :class:`Prediction` whose ``warnings`` list says when an input, or the computed charge or
   distance, is outside the range of the data the law was fitted on (extrapolation).
+* A law predicts the PPV quantity it was fitted on (``ppv_kind``); :func:`fit` refuses events that mix kinds.
 """
 
 from __future__ import annotations
@@ -69,6 +70,10 @@ def fit(events: pd.DataFrame, law: str | Law = "sqrt", z: float = 2.0, outlier_z
     ``law`` is ``"sqrt"`` (``v = K (D / W**0.5)**-beta``), ``"cbrt"`` (``W**(1/3)``) or ``"general"``
     (``v = K W**a D**-beta``); an :class:`attenuation.Law` value is also accepted. ``z`` sets the upper bound
     ``k * 10**(z * sigma)``; events with ``|residual| > outlier_z * sigma`` are listed in ``outliers`` but kept.
+
+    The law predicts the quantity it was fitted on (the ``ppv_kind`` of the events: peak component, vector sum or
+    vertical), so compare its predictions only with limits of that quantity. A ``ppv_kind`` column with more than one
+    kind is refused: fit one law per kind.
     """
     law = _law(law)
     missing = [c for c in _COLUMNS if c not in events.columns]
@@ -77,5 +82,12 @@ def fit(events: pd.DataFrame, law: str | Law = "sqrt", z: float = 2.0, outlier_z
             f"Domain error [BlastingPy]: parameter 'events' is missing the column {missing[0]!r}. "
             f"Expected columns: {list(_COLUMNS)}"
         )
+    if "ppv_kind" in events.columns:
+        kinds = sorted(str(k) for k in events["ppv_kind"].dropna().unique())
+        if len(kinds) > 1:
+            raise ValueError(
+                f"Domain error [BlastingPy]: parameter 'events' mixes the PPV kinds {kinds} in 'ppv_kind'; "
+                f"a law predicts the quantity it was fitted on, so fit one law per kind"
+            )
     d, w, v = (events[c].to_numpy(dtype=float).tolist() for c in _COLUMNS)
     return _core.fit_site_law(d, w, v, law, z, outlier_z)
