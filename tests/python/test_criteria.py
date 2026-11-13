@@ -302,6 +302,12 @@ def test_profile_numbers_must_be_finite_and_positive(field, build, bad):
         load_profile(profile)
 
 
+def test_profile_numbers_may_be_numpy_scalars():
+    import numpy as np
+    assert load_profile(_flat(np.float64(20.0))).criteria["f"].limit_mm_s == 20.0
+    assert load_profile(_table(limit=np.int64(20))).criteria["t"].rows[0].limit_mm_s == 20.0
+
+
 @pytest.mark.parametrize("bad", [NAN, float("inf"), -1.0, "0", None])
 def test_profile_f_min_must_be_finite_and_not_negative(bad):
     with pytest.raises(ValueError, match=r"\(profile 'U', criterion 'c'\) segment 0: 'f_min' must be .*>= 0"):

@@ -55,6 +55,7 @@ import dataclasses
 import importlib.resources
 import json
 import math
+import numbers
 import os
 from typing import NamedTuple
 
@@ -73,8 +74,6 @@ _SEGMENT_KINDS = {"constant_velocity": _cc.SegmentKind.ConstantVelocity,
                   "constant_displacement": _cc.SegmentKind.ConstantDisplacement,
                   "linear": _cc.SegmentKind.Linear, "loglog": _cc.SegmentKind.LogLog}
 _REL_TOL = 1e-9
-_COMPONENTS = (("transverse", "ppv_t_mm_s", "freq_t_hz"), ("vertical", "ppv_v_mm_s", "freq_v_hz"),
-               ("longitudinal", "ppv_l_mm_s", "freq_l_hz"))
 _PEAK_ONLY = "peak-only check: components at other frequencies are not verified"
 _RESULT = ["status", "limit_mm_s", "margin_mm_s", "margin_pct", "governing", "verification", "reason"]
 
@@ -129,7 +128,7 @@ def _key(data: dict, key: str, where: str):
 def _number(raw: dict, key: str, at: str, *, allow_zero: bool = False) -> float:
     """``raw[key]`` as a float; it must be a finite number > 0 (>= 0 with ``allow_zero``)."""
     value = _key(raw, key, at)
-    ok = (isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    ok = (isinstance(value, numbers.Real) and not isinstance(value, bool) and math.isfinite(value)
           and (value >= 0 if allow_zero else value > 0))
     if not ok:
         bound = ">= 0" if allow_zero else "> 0"
