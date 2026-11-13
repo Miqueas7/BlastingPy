@@ -54,6 +54,7 @@ def _source_in_fuentes(law_name):
     raise AssertionError(law_name)
 
 
+@pytest.mark.skipif(not FUENTES.is_file(), reason="docs/investigacion/FUENTES_SPRINT1.md is not in the sdist")
 @pytest.mark.parametrize(
     "law, method_id, verification",
     [
