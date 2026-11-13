@@ -5,7 +5,9 @@ mm/s, displacement in mm, distance in m). The profiles shipped in the package ke
 criterion (``"V1"`` primary source, ``"V2"`` reliable secondary); a profile loaded from a dict or a path is ``"user"``.
 
 Criterion kinds: ``frequency_curve`` (piecewise limit against the dominant frequency), ``distance_table`` (a row applies
-to ``d <= d_max``; ``d_max`` null is the open last row) and ``flat`` (one limit).
+to ``d <= d_max``; ``d_max`` null is the open last row; ``d_max`` strictly increasing) and ``flat`` (one limit). Every
+number of a criterion (limits, ``value``, ``value_max``, ``d_max``, ``scaled_distance``, ``f_max``) must be finite and
+> 0, and ``f_min`` finite and >= 0; a JSON file with the tokens ``NaN`` or ``Infinity`` is refused.
 
 Verdict of :func:`evaluate`, one row per event:
 
@@ -120,11 +122,30 @@ def _key(data: dict, key: str, where: str):
     return data[key]
 
 
+def _number(raw: dict, key: str, at: str, *, allow_zero: bool = False) -> float:
+    """``raw[key]`` as a float; it must be a finite number > 0 (>= 0 with ``allow_zero``)."""
+    value = _key(raw, key, at)
+    ok = (isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+          and (value >= 0 if allow_zero else value > 0))
+    if not ok:
+        bound = ">= 0" if allow_zero else "> 0"
+        raise _error("profile", f"{at}'{key}' must be a finite number {bound}. Received: {value!r}")
+    return float(value)
+
+
+def _reject_constant(token: str):
+    raise _error("profile", f"contains the JSON token {token}; every number of a profile must be finite")
+
+
+def _json(text: str) -> dict:
+    return json.loads(text, parse_constant=_reject_constant)  # json acepta NaN e Infinity sin esto
+
+
 def _profile_files() -> dict:
     """Shipped profiles: {profile_id: resource}."""
     folder = importlib.resources.files("blastingpy").joinpath("profiles")
     files = [f for f in folder.iterdir() if f.name.endswith(".json")]
-    return {json.loads(f.read_text(encoding="utf-8"))["profile_id"]: f for f in files}
+    return {_json(f.read_text(encoding="utf-8"))["profile_id"]: f for f in files}
 
 
 def list_profiles() -> list[str]:
@@ -141,30 +162,32 @@ def _segments(raw: list, units: dict, where: str) -> tuple:
         raise _error("profile", f"{where}'segments' must be a non-empty list")
     kinds, v1, v2 = [], [], []
     for i, s in enumerate(raw):
-        at = f"{where}segment {i} "
+        at = f"{where}segment {i}: "
         kind = _key(s, "kind", at)
         if kind not in _SEGMENT_KINDS:
             raise _error("profile", f"{at}has an unknown kind {kind!r}. Valid kinds: {list(_SEGMENT_KINDS)}")
         quantity = "displacement" if kind == "constant_displacement" else "velocity"
         kinds.append(kind)
-        v1.append(to_si(float(_key(s, "value", at)), _unit(units, quantity, where)))
-        v2.append(to_si(float(_key(s, "value_max", at)), _unit(units, "velocity", where))
+        v1.append(to_si(_number(s, "value", at), _unit(units, quantity, where)))
+        v2.append(to_si(_number(s, "value_max", at), _unit(units, "velocity", where))
                   if kind in ("linear", "loglog") else math.nan)
     f_max = []
     for i, s in enumerate(raw):
-        value = _key(s, "f_max", f"{where}segment {i} ")
+        at = f"{where}segment {i}: "
+        value = _key(s, "f_max", at)
         if value == "intersection":
             pair = {kinds[i], kinds[i + 1]} if i + 1 < len(raw) else set()
             if pair != {"constant_velocity", "constant_displacement"}:
-                raise _error("profile", f"{where}segment {i}: 'f_max': 'intersection' needs a constant_velocity and a "
+                raise _error("profile", f"{at}'f_max': 'intersection' needs a constant_velocity and a "
                                         f"constant_displacement neighbour as the next segment")
             vel, disp = (v1[i], v1[i + 1]) if kinds[i] == "constant_velocity" else (v1[i + 1], v1[i])
             f_max.append(_cc.intersection_frequency(vel, disp))
         else:
-            f_max.append(math.inf if value is None else float(value))
+            f_max.append(math.inf if value is None else _number(s, "f_max", at))
     segments = []
     for i, s in enumerate(raw):
-        f_min = float(_key(s, "f_min", f"{where}segment 0 ")) if i == 0 else float(s.get("f_min", f_max[i - 1]))
+        at = f"{where}segment {i}: "
+        f_min = _number(s, "f_min", at, allow_zero=True) if i == 0 or "f_min" in s else f_max[i - 1]
         segments.append(_cc.Segment(_SEGMENT_KINDS[kinds[i]], f_min, f_max[i], v1[i], v2[i]))
     _cc.limit_at(segments, 1.0)  # valida la curva al cargarla (tramos ordenados, sin huecos)
     return tuple(segments)
@@ -175,22 +198,21 @@ def _rows(raw: list, units: dict, where: str) -> tuple:
         raise _error("profile", f"{where}'rows' must be a non-empty list")
     rows = []
     for i, r in enumerate(raw):
-        at = f"{where}row {i} "
+        at = f"{where}row {i}: "
         d_max = _key(r, "d_max", at)
         if d_max is None and i + 1 != len(raw):
             raise _error("profile", f"{at}'d_max' may be null only on the last row")
-        d_max_m = math.inf if d_max is None else to_si(float(d_max), _unit(units, "distance", where))
+        d_max_m = math.inf if d_max is None else to_si(_number(r, "d_max", at), _unit(units, "distance", where))
         if rows and d_max_m <= rows[-1].d_max_m:
             raise _error("profile", f"{at}'d_max' must be greater than the previous row's")
-        sd = r.get("scaled_distance")
-        rows.append(_Row(d_max_m, to_si(float(_key(r, "limit", at)), _unit(units, "velocity", where)),
-                         None if sd is None else float(sd)))
+        sd = None if r.get("scaled_distance") is None else _number(r, "scaled_distance", at)
+        rows.append(_Row(d_max_m, to_si(_number(r, "limit", at), _unit(units, "velocity", where)), sd))
     return tuple(rows)
 
 
-def _criterion(raw: dict, units: dict, user: bool) -> Criterion:
-    cid = _key(raw, "id", "a criterion ")
-    where = f"criterion {cid!r} "
+def _criterion(raw: dict, units: dict, user: bool, profile_id) -> Criterion:
+    cid = _key(raw, "id", f"(profile {profile_id!r}) a criterion ")
+    where = f"(profile {profile_id!r}, criterion {cid!r}) "
     kind = _key(raw, "kind", where)
     if kind not in _KINDS:
         raise _error("profile", f"{where}has an unknown kind {kind!r}. Valid kinds: {list(_KINDS)}")
@@ -203,7 +225,7 @@ def _criterion(raw: dict, units: dict, user: bool) -> Criterion:
     elif kind == "distance_table":
         fields["rows"] = _rows(_key(raw, "rows", where), units, where)
     else:
-        fields["limit_mm_s"] = to_si(float(_key(raw, "limit", where)), _unit(units, "velocity", where))
+        fields["limit_mm_s"] = to_si(_number(raw, "limit", where), _unit(units, "velocity", where))
     return Criterion(**fields)
 
 
@@ -215,7 +237,7 @@ def _build(data: dict, user: bool) -> Profile:
     units = _key(data, "units", "")
     criteria = {}
     for raw in _key(data, "criteria", ""):
-        c = _criterion(raw, units, user)
+        c = _criterion(raw, units, user, profile_id)
         if c.criterion_id in criteria:
             raise _error("profile", f"has the criterion id {c.criterion_id!r} twice")
         criteria[c.criterion_id] = c
@@ -237,10 +259,10 @@ def load_profile(profile: str | os.PathLike | dict) -> Profile:
     if isinstance(profile, (str, os.PathLike)):
         files = _profile_files()
         if isinstance(profile, str) and profile in files:
-            return _build(json.loads(files[profile].read_text(encoding="utf-8")), user=False)
+            return _build(_json(files[profile].read_text(encoding="utf-8")), user=False)
         if os.path.isfile(profile):
             with open(profile, encoding="utf-8") as f:
-                return _build(json.load(f), user=True)
+                return _build(_json(f.read()), user=True)
     raise _error("profile", f"must be one of {sorted(_profile_files())}, a path to a JSON file or a dict. "
                             f"Received: {profile!r}")
 
@@ -351,6 +373,8 @@ def _verdict(row: dict, c: Criterion, quantity: str) -> list:
     evaluated, out_of_domain = [], []
     for label, ppv, freq, freq_name in candidates:
         status, limit, governing, reason = _limit(c, freq, _value(row, "distance_m"), freq_name)
+        if status is None and _missing(limit):  # defensa: un límite no finito o <= 0 nunca da «cumple»
+            status, reason = "not_comparable", f"the criterion's limit is not a finite value > 0 ({limit:g})"
         if status == "not_comparable":
             if label and c.kind == "frequency_curve":
                 reason = f"the {label} component has a PPV but {reason}"

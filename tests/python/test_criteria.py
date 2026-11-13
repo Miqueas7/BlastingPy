@@ -263,6 +263,82 @@ def test_user_profile_dict_and_path(tmp_path):
         load_profile(broken)
 
 
+def _flat(limit):
+    return {"profile_id": "U", "quantity": "component_max", "units": {"velocity": "mm/s"},
+            "criteria": [{"id": "f", "kind": "flat", "limit": limit}]}
+
+
+def _table(**row):
+    rows = [{"d_max": 50.0, "limit": 20.0, "scaled_distance": 10.0}, {"d_max": None, "limit": 10.0}]
+    rows[0].update(row)
+    return {"profile_id": "U", "quantity": "component_max",
+            "units": {"velocity": "mm/s", "distance": "m", "charge": "kg"},
+            "criteria": [{"id": "t", "kind": "distance_table", "rows": rows}]}
+
+
+def _curve(**segment):
+    segments = [{"kind": "linear", "f_min": 1.0, "f_max": 10.0, "value": 5.0, "value_max": 10.0},
+                {"kind": "constant_velocity", "f_max": None, "value": 10.0}]
+    segments[0].update(segment)
+    return {"profile_id": "U", "quantity": "component_max", "units": {"velocity": "mm/s"},
+            "criteria": [{"id": "c", "kind": "frequency_curve", "segments": segments}]}
+
+
+BAD_NUMBERS = [NAN, float("inf"), -float("inf"), 0.0, -5.0, "12", None, True, [1.0]]
+FIELDS = [("limit", lambda v: _flat(v)), ("limit", lambda v: _table(limit=v)),
+          ("scaled_distance", lambda v: _table(scaled_distance=v)), ("d_max", lambda v: _table(d_max=v)),
+          ("value", lambda v: _curve(value=v)), ("value_max", lambda v: _curve(value_max=v)),
+          ("f_max", lambda v: _curve(f_max=v))]
+NULLABLE = ("scaled_distance", "d_max", "f_max")  # null: sin distancia escalada, última fila o tramo abierto
+
+
+@pytest.mark.parametrize("field, build, bad", [(f, b, v) for f, b in FIELDS for v in BAD_NUMBERS
+                                               if not (v is None and f in NULLABLE)])
+def test_profile_numbers_must_be_finite_and_positive(field, build, bad):
+    # Un límite NaN o infinito daba «cumple» a cualquier evento; un 0 daba ZeroDivisionError.
+    profile = build(bad)
+    with pytest.raises(ValueError, match=rf"parameter 'profile' \(profile 'U', criterion '[ftc]'\).*'{field}' must be"):
+        load_profile(profile)
+
+
+@pytest.mark.parametrize("bad", [NAN, float("inf"), -1.0, "0", None])
+def test_profile_f_min_must_be_finite_and_not_negative(bad):
+    with pytest.raises(ValueError, match=r"\(profile 'U', criterion 'c'\) segment 0: 'f_min' must be .*>= 0"):
+        load_profile(_curve(f_min=bad))
+    later = _curve()
+    later["criteria"][0]["segments"][1]["f_min"] = bad
+    with pytest.raises(ValueError, match=r"segment 1: 'f_min' must be"):
+        load_profile(later)
+    assert load_profile(_curve(f_min=0.0, kind="constant_velocity")).criteria["c"].segments[0].f_min == 0.0
+
+
+def test_profile_d_max_must_increase():
+    profile = _table()
+    profile["criteria"][0]["rows"] = [{"d_max": 50.0, "limit": 20.0}, {"d_max": 50.0, "limit": 10.0}]
+    with pytest.raises(ValueError, match=r"row 1: 'd_max' must be greater than the previous row's"):
+        load_profile(profile)
+
+
+def test_profile_json_rejects_nan_and_infinity_tokens(tmp_path):
+    for token in ("NaN", "Infinity", "-Infinity"):
+        path = tmp_path / f"{token}.json"
+        path.write_text(json.dumps(_flat(1.0)).replace("1.0", token), encoding="utf-8")
+        with pytest.raises(ValueError, match=rf"parameter 'profile'.*{token}"):
+            load_profile(path)
+
+
+def test_a_non_finite_limit_never_complies():
+    # Defensa en profundidad: un Criterion armado a mano (sin pasar por el cargador) con límite NaN no da «cumple».
+    from blastingpy.criteria import Criterion
+    good = load_profile(_flat(20.0))
+    for limit in (NAN, float("inf"), 0.0):
+        c = Criterion(criterion_id="f", kind="flat", structure={}, verification="user", reference="", note="",
+                      limit_mm_s=limit)
+        p = Profile(**{**good.__dict__, "criteria": {"f": c}})
+        r = evaluate(_ev(ppv_mm_s=500.0), p, "f").iloc[0]
+        assert r.status == "not_comparable" and "limit" in r.reason and math.isnan(r.limit_mm_s)
+
+
 def test_result_frame_keeps_index_and_columns():
     ev = pd.concat([_ev(), _ev(ppv_mm_s=30.0)])
     ev.index = ["a", "b"]
