@@ -83,6 +83,8 @@ c = criteria.load_profile("DIN-4150-3-2016").criteria["line-2"]
 print(c.verification, c.reference, c.note, sep="\n")
 ```
 
+(The `note` texts of the DIN and BS criteria are currently in Spanish only; they will be made bilingual in a later change.)
+
 ## What the verdict means
 
 `criteria.evaluate(events, profile, criterion)` returns one row per event with `status`, `limit_mm_s`, `margin_mm_s`,
@@ -102,16 +104,18 @@ carry are not checked.
 
 ## Your own profile
 
-Standards whose limits depend on factors you must supply (for example SS 4604866), and standards not yet included, can
-be used by passing a profile as a dict (or the path to a JSON file). Its criteria get the mark `"user"`:
+A user-defined profile is the way to apply a limit you have from a standard that is not included, or a limit set by a
+permit or a contract. Pass it as a dict (or the path to a JSON file); its criteria get the mark `"user"`:
 
 ```python
-mine = {"profile_id": "MY-LIMIT", "quantity": "vertical", "units": {"velocity": "mm/s"},
+mine = {"profile_id": "MY-LIMIT", "quantity": "component_max", "units": {"velocity": "mm/s"},
         "criteria": [{"id": "flat-10", "kind": "flat", "limit": 10.0, "reference": "Contract clause 4"}]}
 criteria.evaluate(events, mine, "flat-10")
 ```
 
-Criterion kinds: `flat`, `frequency_curve` and `distance_table`; see `python/blastingpy/profiles/` for examples.
+A profile's `quantity` must be one the events carry; otherwise every verdict is `not_comparable` and `reason` says what
+is missing. Criterion kinds: `flat` (shown above), `frequency_curve` and `distance_table`; the shipped JSON files in
+`python/blastingpy/profiles/` illustrate the last two.
 
 ## Not included yet
 

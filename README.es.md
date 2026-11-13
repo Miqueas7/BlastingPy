@@ -76,7 +76,7 @@ en una fuente secundaria confiable, no en la norma.
 
 **Un perfil nunca reemplaza a la norma.** Es una transcripción de valores límite con su cita. Los dos perfiles V2
 (BS 7385-2 y DIN 4150-3) se transcribieron de fuentes secundarias y hay que cotejarlos con la norma comprada antes de
-apoyarse en ellos. Los valores de DIN 4150-3 se leyeron de una figura, en líneas de grilla rotuladas.
+apoyarse en ellos. Los valores de DIN 4150-3 se leyeron de una figura, en líneas de cuadrícula rotuladas.
 
 Para ver las reservas de un perfil, que la tabla del veredicto solo muestra como marca:
 
@@ -104,17 +104,19 @@ no trae no se revisan.
 
 ## Tu propio perfil
 
-Las normas cuyos límites dependen de factores que tú debes aportar (por ejemplo SS 4604866) y las que aún no están
-incluidas se pueden usar pasando un perfil como diccionario (o la ruta a un JSON). Sus criterios llevan la marca
+Un perfil propio sirve para aplicar un límite que tienes de una norma que no está incluida, o uno fijado por un permiso
+o un contrato. Se pasa como diccionario (o la ruta a un JSON); sus criterios llevan la marca
 `"user"`:
 
 ```python
-mine = {"profile_id": "MY-LIMIT", "quantity": "vertical", "units": {"velocity": "mm/s"},
+mine = {"profile_id": "MY-LIMIT", "quantity": "component_max", "units": {"velocity": "mm/s"},
         "criteria": [{"id": "flat-10", "kind": "flat", "limit": 10.0, "reference": "Contract clause 4"}]}
 criteria.evaluate(events, mine, "flat-10")
 ```
 
-Tipos de criterio: `flat`, `frequency_curve` y `distance_table`; hay ejemplos en `python/blastingpy/profiles/`.
+El `quantity` del perfil debe ser una magnitud que traigan los eventos; si no, todos los veredictos son `not_comparable` y
+`reason` dice qué falta. Tipos de criterio: `flat` (el de arriba), `frequency_curve` y `distance_table`; los JSON que
+viajan en `python/blastingpy/profiles/` ilustran los dos últimos.
 
 ## Qué falta todavía
 
