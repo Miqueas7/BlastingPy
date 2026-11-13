@@ -50,6 +50,10 @@ plotting.plot_compliance(events, "USBM-RI8507-1980", "appendix-b-drywall")
   the median.
 - **Warnings.** Fits with fewer than 30 events, `beta <= 0` and predictions outside the fitted range of distance or
   charge come with warnings (`law.warnings`, `result.warnings`). A law with `beta <= 0` is refused for predictions.
+  A law with `sigma == 0` or `z == 0` (for example `make_site_law` without `sigma`) has an upper bound equal to the
+  median: its predictions at the upper bound warn that the result has no safety margin.
+- **One quantity per law.** A law predicts the PPV quantity it was fitted on (`ppv_kind`), so compare it only with
+  limits of that quantity; `attenuation.fit` refuses events that mix kinds.
 
 ## Site laws
 
@@ -80,10 +84,8 @@ To see a profile's reservations, which the verdict table shows only as a mark:
 
 ```python
 c = criteria.load_profile("DIN-4150-3-2016").criteria["line-2"]
-print(c.verification, c.reference, c.note, sep="\n")
+print(c.verification, c.reference, c.note["en"], sep="\n")
 ```
-
-(The `note` texts of the DIN and BS criteria are currently in Spanish only; they will be made bilingual in a later change.)
 
 ## What the verdict means
 
@@ -102,6 +104,12 @@ three components (`ppv_t_mm_s`, `ppv_v_mm_s`, `ppv_l_mm_s`) or a peak declared w
 frequency is taken as the event's maximum component; smaller components at lower frequencies that the event does not
 carry are not checked.
 
+`reason` is empty for `complies`, except when a frequency-curve verdict rests on that peak without the three
+components: then it says `peak-only check: components at other frequencies are not verified`. The verdict frame
+carries what it was checked against in `verdict.attrs` (`profile_id`, `criterion`, `citation`, `edition`, `quantity`,
+`frequency_methods`, `verification`, `reference`), and `criteria.candidates(events, profile, criterion)` lists, per
+event, the values the verdict compared with the limit (the compliance chart draws exactly those).
+
 ## Your own profile
 
 A user-defined profile is the way to apply a limit you have from a standard that is not included, or a limit set by a
@@ -115,7 +123,8 @@ criteria.evaluate(events, mine, "flat-10")
 
 A profile's `quantity` must be one the events carry; otherwise every verdict is `not_comparable` and `reason` says what
 is missing. Criterion kinds: `flat` (shown above), `frequency_curve` and `distance_table`; the shipped JSON files in
-`python/blastingpy/profiles/` illustrate the last two.
+`python/blastingpy/profiles/` illustrate the last two. Every limit, frequency and distance in a profile must be a
+finite number > 0 (`f_min` may be 0); anything else is refused when the profile is loaded.
 
 ## Not included yet
 

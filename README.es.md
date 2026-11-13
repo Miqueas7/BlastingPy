@@ -52,6 +52,10 @@ sintéticos en [examples/01-site-law-and-compliance](examples/01-site-law-and-co
   superior por omisión; pasa `attenuation.Level.Median` para la mediana.
 - **Avisos.** Un ajuste con menos de 30 eventos, con `beta <= 0`, o una predicción fuera del rango de distancia o de
   carga del ajuste traen avisos (`law.warnings`, `result.warnings`). Una ley con `beta <= 0` no se usa para predecir.
+  Una ley con `sigma == 0` o `z == 0` (por ejemplo, `make_site_law` sin `sigma`) tiene la cota superior igual a la
+  mediana: sus predicciones con la cota avisan que el resultado no tiene margen de seguridad.
+- **Una magnitud por ley.** Una ley predice la magnitud de PPV con la que se ajustó (`ppv_kind`), así que solo se
+  compara con límites de esa magnitud; `attenuation.fit` rechaza eventos que mezclan clases.
 
 ## Leyes del sitio
 
@@ -82,7 +86,7 @@ Para ver las reservas de un perfil, que la tabla del veredicto solo muestra como
 
 ```python
 c = criteria.load_profile("DIN-4150-3-2016").criteria["line-2"]
-print(c.verification, c.reference, c.note, sep="\n")
+print(c.verification, c.reference, c.note["es"], sep="\n")
 ```
 
 ## Qué significa el veredicto
@@ -102,6 +106,12 @@ tres componentes (`ppv_t_mm_s`, `ppv_v_mm_s`, `ppv_l_mm_s`) o un pico declarado 
 frecuencia se toma como la componente máxima del evento; las componentes menores a frecuencias más bajas que el evento
 no trae no se revisan.
 
+`reason` queda vacío en `complies`, salvo cuando un veredicto contra una curva de frecuencia se apoya en ese pico sin
+las tres componentes: entonces dice `peak-only check: components at other frequencies are not verified`. La tabla del
+veredicto lleva en `verdict.attrs` contra qué se comparó (`profile_id`, `criterion`, `citation`, `edition`,
+`quantity`, `frequency_methods`, `verification`, `reference`), y `criteria.candidates(events, profile, criterion)`
+lista, por evento, los valores que el veredicto comparó con el límite (el gráfico de cumplimiento dibuja justo esos).
+
 ## Tu propio perfil
 
 Un perfil propio sirve para aplicar un límite que tienes de una norma que no está incluida, o uno fijado por un permiso
@@ -116,7 +126,8 @@ criteria.evaluate(events, mine, "flat-10")
 
 El `quantity` del perfil debe ser una magnitud que traigan los eventos; si no, todos los veredictos son `not_comparable` y
 `reason` dice qué falta. Tipos de criterio: `flat` (el de arriba), `frequency_curve` y `distance_table`; los JSON que
-viajan en `python/blastingpy/profiles/` ilustran los dos últimos.
+viajan en `python/blastingpy/profiles/` ilustran los dos últimos. Todo límite, frecuencia y distancia de un perfil debe
+ser un número finito > 0 (`f_min` puede ser 0); cualquier otra cosa se rechaza al cargar el perfil.
 
 ## Qué falta todavía
 
