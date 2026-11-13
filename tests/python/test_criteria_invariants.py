@@ -9,9 +9,10 @@ import math
 import pandas as pd
 import pytest
 
-from blastingpy.criteria import evaluate
+from blastingpy.criteria import candidates, evaluate
 
-PPV = ("ppv_mm_s", "ppv_t_mm_s", "ppv_v_mm_s", "ppv_l_mm_s")
+PEAK_ONLY = "peak-only check: components at other frequencies are not verified"
+PPV =("ppv_mm_s", "ppv_t_mm_s", "ppv_v_mm_s", "ppv_l_mm_s")
 FREQ = ("frequency_hz", "freq_t_hz", "freq_v_hz", "freq_l_hz")
 COLUMNS = PPV + FREQ
 GRID = {**{c: (None, 5.0, 20.0) for c in PPV}, **{c: (None, 4.0, 50.0) for c in FREQ}}
@@ -30,14 +31,39 @@ def _grid():
 
 
 @pytest.fixture(scope="module")
-def statuses():
+def results():
+    """{perfil: (claves de la grilla, veredictos, candidatos)}."""
     keys = _grid()
     frame = pd.DataFrame([{"ppv_kind": k[0], **{c: (math.nan if v is None else v) for c, v in zip(COLUMNS, k[1:])}}
                           for k in keys])
-    out = {}
-    for name, (profile, criterion) in PROFILES.items():
-        out[name] = dict(zip(keys, evaluate(frame, profile, criterion)["status"]))
-    return out
+    return {name: (keys, evaluate(frame, profile, criterion), candidates(frame, profile, criterion))
+            for name, (profile, criterion) in PROFILES.items()}
+
+
+@pytest.fixture(scope="module")
+def statuses(results):
+    return {name: dict(zip(keys, out["status"])) for name, (keys, out, _) in results.items()}
+
+
+@pytest.mark.parametrize("profile", list(PROFILES))
+def test_candidates_agree_with_the_verdict(results, profile):
+    # El gráfico dibuja estos candidatos: un exceso del veredicto siempre tiene un candidato que excede.
+    keys, out, cands = results[profile]
+    for key, status, cs in zip(keys, out["status"], cands):
+        assert (status == "exceeds") == any(c.exceeds for c in cs), key
+        if status == "complies":
+            assert cs and all(math.isfinite(c.limit_mm_s) and not c.exceeds for c in cs), key
+
+
+def test_peak_only_note_marks_exactly_the_compliances_that_rest_on_the_peak(results):
+    for profile, (keys, out, _) in results.items():
+        for key, status, reason in zip(keys, out["status"], out["reason"]):
+            if status != "complies":
+                continue
+            kind, values = key[0], dict(zip(COLUMNS, key[1:]))
+            three = all(values[c] is not None for c in ("ppv_t_mm_s", "ppv_v_mm_s", "ppv_l_mm_s"))
+            peak_only = profile == "component_max" and kind == "component_max" and not three
+            assert reason == (PEAK_ONLY if peak_only else ""), (profile, key, reason)
 
 
 @pytest.mark.parametrize("profile", list(PROFILES))

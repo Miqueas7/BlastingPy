@@ -43,7 +43,10 @@ A candidate complies when ``ppv <= limit * (1 + 1e-9)`` (equality complies). The
 * ``complies`` otherwise: every candidate was evaluated and complies.
 
 Limit, margins and ``governing`` are those of the candidate with the smallest margin (mm/s) among the exceeding ones, or
-among all the evaluated ones; NaN and empty for ``not_comparable``.
+among all the evaluated ones; NaN and empty for ``not_comparable``. ``reason`` is empty for ``complies``, except
+against a ``frequency_curve`` when the maximum component is known only through the ``component_max`` peak (some of the
+three components are absent): then it carries the note ``peak-only check: components at other frequencies are not
+verified`` (the accepted limitation above). :func:`candidates` returns, per event, the candidates the verdict used.
 """
 
 from __future__ import annotations
@@ -72,6 +75,7 @@ _SEGMENT_KINDS = {"constant_velocity": _cc.SegmentKind.ConstantVelocity,
 _REL_TOL = 1e-9
 _COMPONENTS = (("transverse", "ppv_t_mm_s", "freq_t_hz"), ("vertical", "ppv_v_mm_s", "freq_v_hz"),
                ("longitudinal", "ppv_l_mm_s", "freq_l_hz"))
+_PEAK_ONLY = "peak-only check: components at other frequencies are not verified"
 _RESULT = ["status", "limit_mm_s", "margin_mm_s", "margin_pct", "governing", "verification", "reason"]
 
 
@@ -330,12 +334,13 @@ def _group(row: dict, label: str, values: list, freqs: list, candidates: list, p
     return bool(vals)
 
 
-def _magnitudes(row: dict, quantity: str) -> tuple[list, list]:
-    """Candidates [(component label, ppv, frequency, frequency column)] and the problems that block comparing.
+def _magnitudes(row: dict, quantity: str) -> tuple[list, list, bool]:
+    """Candidates [(component label, ppv, frequency, frequency column)], the problems that block comparing, and whether
+    the maximum component is known only through the recorded peak (some of the three components are absent).
 
     Each value of the quantity is paired with every frequency the event gives for it, so a new column only adds pairs.
     """
-    kind, problems, candidates = row.get("ppv_kind"), [], []
+    kind, problems, candidates, peak_only = row.get("ppv_kind"), [], [], False
     vertical = (["ppv_v_mm_s"] + (["ppv_mm_s"] if kind == "vertical" else []),
                 ["freq_v_hz"] + (["frequency_hz"] if kind == "vertical" else []))
     if quantity == "component_max":
@@ -352,6 +357,7 @@ def _magnitudes(row: dict, quantity: str) -> tuple[list, list]:
                 candidates.append(("", peak, f, "frequency_hz"))
         if candidates and absent and math.isnan(peak):  # solo se cumple si se conoce la componente máxima
             problems.append(f"missing components: {', '.join(absent)}")
+        peak_only = bool(absent) and not math.isnan(peak)
         missing = (f"the profile needs the peak component PPV (ppv_kind 'component_max' or columns "
                    f"ppv_t/v/l_mm_s); the event has ppv_kind {kind!r}")
     elif quantity == "vertical":
@@ -363,27 +369,48 @@ def _magnitudes(row: dict, quantity: str) -> tuple[list, list]:
         missing = f"the profile needs pvs_mm_s (or ppv_kind 'vector_sum'); the event has ppv_kind {kind!r}"
     if not candidates and not problems:
         problems.append("ppv_mm_s is empty" if kind == quantity else missing)
-    return candidates, problems
+    return candidates, problems, peak_only
+
+
+class _Evaluated(NamedTuple):
+    label: str
+    ppv: float
+    frequency: float
+    status: str | None  # None: se comparó con un límite
+    limit: float
+    governing: str
+    reason: str
+
+
+def _row_candidates(row: dict, c: Criterion, quantity: str) -> tuple[list, list, bool]:
+    """The candidates of one event, each with its limit (or why it has none); the single source of the verdict and of
+    the chart. Returns ([_Evaluated], problems of the event, peak_only)."""
+    pairs, problems, peak_only = _magnitudes(row, quantity)
+    distance, out = _value(row, "distance_m"), []
+    for label, ppv, freq, freq_name in pairs:
+        status, limit, governing, reason = _limit(c, freq, distance, freq_name)
+        if status is None and _missing(limit):  # defensa: un límite no finito o <= 0 nunca da «cumple»
+            reason = f"the criterion's limit is not a finite value > 0 ({limit:g})"
+            status, limit, governing = "not_comparable", math.nan, ""
+        elif status == "not_comparable" and label and c.kind == "frequency_curve":
+            reason = f"the {label} component has a PPV but {reason}"
+        out.append(_Evaluated(label, ppv, freq, status, limit, governing, reason))
+    return out, problems, peak_only
 
 
 def _verdict(row: dict, c: Criterion, quantity: str) -> list:
     """Precedence: exceeds > not_comparable > indeterminate > complies (complies only if every candidate complies)."""
     nan = math.nan
-    candidates, problems = _magnitudes(row, quantity)
+    candidates, problems, peak_only = _row_candidates(row, c, quantity)
     evaluated, out_of_domain = [], []
-    for label, ppv, freq, freq_name in candidates:
-        status, limit, governing, reason = _limit(c, freq, _value(row, "distance_m"), freq_name)
-        if status is None and _missing(limit):  # defensa: un límite no finito o <= 0 nunca da «cumple»
-            status, reason = "not_comparable", f"the criterion's limit is not a finite value > 0 ({limit:g})"
-        if status == "not_comparable":
-            if label and c.kind == "frequency_curve":
-                reason = f"the {label} component has a PPV but {reason}"
-            problems.append(reason)
-        elif status == "indeterminate":
-            out_of_domain.append(reason)
+    for e in candidates:
+        if e.status == "not_comparable":
+            problems.append(e.reason)
+        elif e.status == "indeterminate":
+            out_of_domain.append(e.reason)
         else:
-            prefix = f"{label}/" if label and governing else ""
-            evaluated.append((limit - ppv, limit, prefix + governing, ppv))
+            prefix = f"{e.label}/" if e.label and e.governing else ""
+            evaluated.append((e.limit - e.ppv, e.limit, prefix + e.governing, e.ppv))
     exceeding = [e for e in evaluated if e[3] > e[1] * (1 + _REL_TOL)]
     if exceeding:
         status, (margin, limit, governing, _) = "exceeds", min(exceeding, key=lambda e: e[0])
@@ -396,7 +423,43 @@ def _verdict(row: dict, c: Criterion, quantity: str) -> list:
         margin, limit, governing, _ = min(evaluated, key=lambda e: e[0])
         status = "indeterminate" if out_of_domain else "complies"
         reason = "; ".join(out_of_domain)
+        if status == "complies" and peak_only and c.kind == "frequency_curve":
+            reason = _PEAK_ONLY  # la limitación aceptada viaja con el resultado
     return [status, limit, margin, 100.0 * margin / limit, governing, c.verification, reason]
+
+
+def _prepare(events: pd.DataFrame, profile, criterion: str) -> tuple[Profile, Criterion, list]:
+    profile, c = _get_criterion(profile, criterion)
+    required = ["ppv_mm_s", "ppv_kind"] + (["distance_m"] if c.kind == "distance_table" else [])
+    missing = [col for col in required if col not in events.columns]
+    if missing:
+        raise _error("events", f"is missing the column {missing[0]!r}. Required for this criterion: {required}")
+    return profile, c, events.to_dict("records")
+
+
+class Candidate(NamedTuple):
+    """One value of an event that the verdict compared (or tried to compare) with the criterion's limit."""
+
+    label: str  # "transverse", "vertical", "longitudinal", or "" for the event's own value of the quantity
+    ppv_mm_s: float
+    frequency_hz: float  # NaN when the event gives no frequency for this value
+    limit_mm_s: float  # NaN when the value could not be compared (no frequency or distance, outside the domain)
+    exceeds: bool  # above its limit, with the verdict's tolerance
+
+
+def candidates(events: pd.DataFrame, profile: Profile | str, criterion: str) -> list[list[Candidate]]:
+    """Per event, the candidates :func:`evaluate` used for its verdict (same rules, same order).
+
+    For charts and audits: :func:`blastingpy.plotting.plot_compliance` draws exactly these. Values that are bad data,
+    and components that are missing, give no candidate (they show up in the verdict's ``reason``).
+    """
+    profile, c, rows = _prepare(events, profile, criterion)
+    out = []
+    for row in rows:
+        cands = _row_candidates(row, c, profile.quantity)[0]
+        out.append([Candidate(e.label, e.ppv, e.frequency, e.limit,
+                              e.status is None and e.ppv > e.limit * (1 + _REL_TOL)) for e in cands])
+    return out
 
 
 def evaluate(events: pd.DataFrame, profile: Profile | str, criterion: str) -> pd.DataFrame:
@@ -405,16 +468,19 @@ def evaluate(events: pd.DataFrame, profile: Profile | str, criterion: str) -> pd
     ``events`` needs ``ppv_mm_s`` and ``ppv_kind`` (and ``distance_m`` for a distance table); the other canonical
     columns are used when present. Returns one row per event, same index, with the columns ``status``,
     ``limit_mm_s``, ``margin_mm_s`` (limit - PPV), ``margin_pct`` (of the limit), ``governing``, ``verification`` and
-    ``reason``. See the module docstring for the rules.
+    ``reason``. ``attrs`` names what the frame was checked against: ``profile_id``, ``criterion``, ``citation``,
+    ``edition``, ``quantity``, ``frequency_methods``, ``verification`` and ``reference``. See the module docstring for
+    the rules.
     """
-    profile, c = _get_criterion(profile, criterion)
-    required = ["ppv_mm_s", "ppv_kind"] + (["distance_m"] if c.kind == "distance_table" else [])
-    missing = [col for col in required if col not in events.columns]
-    if missing:
-        raise _error("events", f"is missing the column {missing[0]!r}. Required for this criterion: {required}")
-    rows = [_verdict(row, c, profile.quantity) for row in events.to_dict("records")]
-    out = pd.DataFrame(rows, columns=_RESULT, index=events.index)
-    return out.astype({"limit_mm_s": float, "margin_mm_s": float, "margin_pct": float})
+    profile, c, rows = _prepare(events, profile, criterion)
+    out = pd.DataFrame([_verdict(row, c, profile.quantity) for row in rows], columns=_RESULT, index=events.index)
+    out = out.astype({"limit_mm_s": float, "margin_mm_s": float, "margin_pct": float})
+    source = profile.source if isinstance(profile.source, dict) else {}
+    out.attrs = {"profile_id": profile.profile_id, "criterion": c.criterion_id,
+                 "citation": source.get("citation", ""), "edition": source.get("edition", ""),
+                 "quantity": profile.quantity, "frequency_methods": profile.frequency_methods,
+                 "verification": c.verification, "reference": c.reference}
+    return out
 
 
 def max_charge_unmonitored(profile: Profile | str, distance_m: float, criterion: str = "distance-table") -> float:

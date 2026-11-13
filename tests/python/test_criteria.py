@@ -10,6 +10,7 @@ from blastingpy.criteria import Profile, evaluate, list_profiles, load_profile, 
 
 NAN = float("nan")
 COLUMNS = ["status", "limit_mm_s", "margin_mm_s", "margin_pct", "governing", "verification", "reason"]
+PEAK_ONLY = "peak-only check: components at other frequencies are not verified"
 
 
 def _ev(**kw):  # un evento canónico
@@ -20,7 +21,7 @@ def _ev(**kw):  # un evento canónico
 def test_ri8507_curve():
     r = evaluate(_ev(ppv_mm_s=19.05, frequency_hz=10.0), "USBM-RI8507-1980", "appendix-b-drywall").iloc[0]
     assert r.status == "complies" and r.limit_mm_s == pytest.approx(19.05) and r.margin_mm_s == pytest.approx(0.0)
-    assert r.governing == "segment-1" and r.verification == "V1" and r.reason == ""
+    assert r.governing == "segment-1" and r.verification == "V1" and r.reason == PEAK_ONLY
     r = evaluate(_ev(ppv_mm_s=30.0, frequency_hz=50.0), "USBM-RI8507-1980", "appendix-b-drywall").iloc[0]
     assert r.limit_mm_s == pytest.approx(50.8) and r.margin_pct == pytest.approx(40.945, abs=1e-3)
     r = evaluate(_ev(ppv_mm_s=13.0, frequency_hz=5.0), "USBM-RI8507-1980", "appendix-b-plaster").iloc[0]
@@ -337,6 +338,53 @@ def test_a_non_finite_limit_never_complies():
         p = Profile(**{**good.__dict__, "criteria": {"f": c}})
         r = evaluate(_ev(ppv_mm_s=500.0), p, "f").iloc[0]
         assert r.status == "not_comparable" and "limit" in r.reason and math.isnan(r.limit_mm_s)
+
+
+def test_peak_only_compliance_against_a_curve_says_so():
+    p, c = "USBM-RI8507-1980", "appendix-b-drywall"
+    comps = dict(ppv_t_mm_s=5.0, freq_t_hz=10.0, ppv_v_mm_s=5.0, freq_v_hz=10.0, ppv_l_mm_s=5.0, freq_l_hz=10.0)
+    # El pico con su frecuencia, sin las tres componentes: cumple, pero lo dice en reason.
+    r = evaluate(_ev(ppv_mm_s=5.0, ppv_t_mm_s=4.0, freq_t_hz=50.0), p, c).iloc[0]
+    assert r.status == "complies" and r.reason == PEAK_ONLY
+    # Con las tres componentes, o contra una tabla por distancia, el reason queda vacío.
+    assert evaluate(_ev(ppv_mm_s=5.0, **comps), p, c).iloc[0].reason == ""
+    assert evaluate(_ev(ppv_kind="vector_sum", **comps), p, c).iloc[0].reason == ""
+    r = evaluate(_ev(ppv_mm_s=5.0), "OSMRE-30CFR816.67", "distance-table").iloc[0]
+    assert r.status == "complies" and r.reason == ""
+    # Solo en «cumple»: un exceso del pico no lleva la nota.
+    r = evaluate(_ev(ppv_mm_s=30.0), p, c).iloc[0]
+    assert r.status == "exceeds" and r.reason == ""
+
+
+def test_verdict_frame_describes_itself():
+    out = evaluate(_ev(), "USBM-RI8507-1980", "appendix-b-drywall")
+    assert out.attrs == {
+        "profile_id": "USBM-RI8507-1980", "criterion": "appendix-b-drywall",
+        "citation": load_profile("USBM-RI8507-1980").source["citation"], "edition": "1980",
+        "quantity": "component_max", "frequency_methods": ("zero_crossing", "fourier"), "verification": "V1",
+        "reference": "Appendix B, Fig. B-1 and text, pp. 73-74 (PDF pp. 82-83)"}
+    user = evaluate(_ev(), _flat(20.0), "f").attrs
+    assert user["verification"] == "user" and user["citation"] == "" and user["edition"] == ""
+
+
+def test_candidates_are_the_ones_the_verdict_used():
+    from blastingpy.criteria import Candidate, candidates
+    p, c = "USBM-RI8507-1980", "appendix-b-drywall"
+    ev = pd.concat([_ev(ppv_mm_s=30.0, ppv_t_mm_s=10.0, freq_t_hz=4.0),  # pico y transversal
+                    _ev(ppv_kind="vector_sum"),  # ningún candidato
+                    _ev(ppv_kind="vertical", ppv_mm_s=12.0, frequency_hz=500.0)], ignore_index=True)
+    got = candidates(ev, p, c)
+    assert len(got) == 3 and got[1] == []
+    t, peak = got[0]
+    assert isinstance(t, Candidate) and t.label == "transverse" and t.frequency_hz == 4.0
+    assert t.limit_mm_s == pytest.approx(19.05) and t.ppv_mm_s == 10.0 and not t.exceeds
+    assert peak.label == "" and peak.ppv_mm_s == 30.0 and peak.exceeds
+    (v,) = got[2]
+    assert v.label == "vertical" and math.isnan(v.limit_mm_s) and not v.exceeds  # 500 Hz: fuera del dominio
+    status = evaluate(ev, p, c).status.tolist()
+    assert status == ["exceeds", "not_comparable", "not_comparable"]
+    with pytest.raises(ValueError, match="appendix-b-drywall"):
+        candidates(ev, p, "nope")
 
 
 def test_result_frame_keeps_index_and_columns():
