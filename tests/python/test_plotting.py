@@ -5,7 +5,9 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import matplotlib.colors  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.collections import PathCollection  # noqa: E402
 import pandas as pd  # noqa: E402
 import pytest  # noqa: E402
 
@@ -69,13 +71,72 @@ def test_compliance_components_add_points():
     assert sum(len(c.get_offsets()) for c in ax.collections) == 10
 
 
+def _points(ax):
+    return [c for c in ax.collections if isinstance(c, PathCollection) and len(c.get_offsets())]
+
+
+def _legend(ax):
+    return [t.get_text() for t in ax.get_legend().get_texts()]
+
+
+def _color(c):
+    return matplotlib.colors.to_hex(c.get_edgecolor()[0])
+
+
+GREEN, RED, GRAY = (matplotlib.colors.to_hex(x) for x in ("tab:green", "tab:red", "tab:gray"))
+
+
 def test_compliance_distance_table():
     ev = synthetic_events(n=9, seed=8)
     ax = plot_compliance(ev, "OSMRE-30CFR816.67", "distance-table")
-    assert ax.get_xlabel() == "Distance (m)" and len(ax.collections) >= 2  # hlines + puntos
-    assert sum(len(c.get_offsets()) for c in ax.collections if hasattr(c, "get_offsets")
-               and c.get_offsets().ndim == 2 and c.get_offsets().shape[1] == 2
-               and len(c.get_offsets()) in range(1, 10)) >= 9
+    assert ax.get_xlabel() == "Distance (m)"
+    assert sum(len(c.get_offsets()) for c in _points(ax)) == 9
+
+
+def _bs_event(**kw):
+    base = dict(distance_m=100.0, charge_kg=50.0, ppv_mm_s=5.0, ppv_kind="component_max", frequency_hz=10.0,
+                ppv_t_mm_s=80.0, freq_t_hz=10.0)
+    return pd.DataFrame([{**base, **kw}])
+
+
+def test_point_colour_is_its_own_comparison():
+    ax = plot_compliance(_bs_event(), "BS-7385-2-1993", "line-2")
+    by_marker = {c.get_paths()[0].vertices.shape: _color(c) for c in _points(ax)}
+    peak, transverse = [_color(c) for c in _points(ax)]  # el pico se dibuja primero
+    assert peak == GREEN and transverse == RED
+    assert any("1 exceeds" in t for t in _legend(ax)) and by_marker
+    assert not any("Peak: exceeds" in t for t in _legend(ax))
+
+
+def test_incomplete_event_is_hollow_and_within():
+    ev = pd.DataFrame([dict(distance_m=1.0, charge_kg=1.0, ppv_mm_s=1.0, ppv_kind="vector_sum", frequency_hz=10.0,
+                            ppv_t_mm_s=2.0, freq_t_hz=10.0)])
+    ax = plot_compliance(ev, "BS-7385-2-1993", "line-2")
+    assert criteria.evaluate(ev, "BS-7385-2-1993", "line-2").status[0] == "not_comparable"
+    (c,) = _points(ax)
+    assert len(c.get_facecolor()) == 0 and _color(c) == GREEN
+    assert any("1 not comparable" in t for t in _legend(ax))
+
+
+def test_point_outside_domain_has_no_limit_colour_and_not_drawn_count():
+    ev = pd.concat([_bs_event(frequency_hz=5000.0, ppv_t_mm_s=float("nan")),
+                    _bs_event(frequency_hz=float("nan"), ppv_t_mm_s=float("nan"))], ignore_index=True)
+    ax = plot_compliance(ev, "BS-7385-2-1993", "line-2")
+    assert [_color(c) for c in _points(ax)] == [GRAY]
+    assert any("not drawn: 1" in t for t in _legend(ax))
+
+
+def test_step_at_4_hz_is_drawn():
+    ax = plot_compliance(_bs_event(), "BS-7385-2-1993", "line-2")
+    x, y = ax.lines[0].get_data()
+    assert y[(x < 4.0)][-1] == pytest.approx(15.08, abs=0.01) and y[x >= 4.0][0] == pytest.approx(15.0, abs=0.01)
+
+
+def test_single_open_ended_table_draws():
+    prof = {"profile_id": "X", "quantity": "component_max", "units": {"velocity": "mm/s", "distance": "m"},
+            "criteria": [{"id": "t", "kind": "distance_table", "rows": [{"d_max": None, "limit": 10.0}]}]}
+    ax = plot_compliance(synthetic_events(n=6, seed=9), prof, "t")
+    assert len(ax.collections) >= 2 and sum(len(c.get_offsets()) for c in _points(ax)) == 6
 
 
 def test_compliance_unsupported_criterion():
