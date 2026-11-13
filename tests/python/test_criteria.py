@@ -274,7 +274,8 @@ def test_result_frame_keeps_index_and_columns():
 
 
 def test_list_profiles_and_unknown_names():
-    assert list_profiles() == ["OSMRE-30CFR816.67", "PE-MEM-1995", "USBM-RI8507-1980"]
+    assert list_profiles() == ["BS-7385-2-1993", "DIN-4150-3-2016", "OSMRE-30CFR816.67", "PE-MEM-1995",
+                               "USBM-RI8507-1980"]
     with pytest.raises(ValueError, match="USBM-RI8507-1980"):
         load_profile("NOPE")
     with pytest.raises(ValueError, match="appendix-b-drywall"):
@@ -286,7 +287,7 @@ def test_list_profiles_and_unknown_names():
 def test_shipped_profiles_schema():
     files = [f for f in importlib.resources.files("blastingpy").joinpath("profiles").iterdir()
              if f.name.endswith(".json")]
-    assert len(files) == 3
+    assert len(files) == 5
     for f in files:
         data = json.loads(f.read_text(encoding="utf-8"))
         assert data["source"]["citation"] and data["quantity"] and data["units"]
@@ -294,3 +295,68 @@ def test_shipped_profiles_schema():
         for c in data["criteria"]:
             assert c["verification"] in {"V1", "V2"} and c["reference"]
         assert load_profile(data["profile_id"]).profile_id == data["profile_id"]
+
+
+def _limit(profile, criterion, f):
+    r = evaluate(_ev(ppv_mm_s=1.0, frequency_hz=f), profile, criterion).iloc[0]
+    return r.status, r.limit_mm_s, r.verification
+
+
+def _check(profile, criterion, cases):
+    for f, expected, tol in cases:
+        status, limit, verification = _limit(profile, criterion, f)
+        assert verification == "V2", (criterion, f)
+        if expected is None:
+            assert status == "indeterminate" and math.isnan(limit), (criterion, f)
+        else:
+            assert limit == pytest.approx(expected, abs=tol), (criterion, f, limit)
+
+
+def test_bs_7385_2_profile_metadata():
+    p = load_profile("BS-7385-2-1993")
+    assert p.quantity == "component_max" and p.frequency_methods == ("zero_crossing", "fourier")
+    assert list(p.criteria) == ["line-1", "line-2"]
+    assert all(c.verification == "V2" and "Malam" in c.reference for c in p.criteria.values())
+
+
+def test_bs_7385_2_line_1():
+    # Malam (1993), Tabla 4 y Fig. 9, p. 145: 50 mm/s de 4 a 250 Hz; bajo 4 Hz la fuente no da valor.
+    _check("BS-7385-2-1993", "line-1",
+           [(3.0, None, 0), (4.0, 50.0, 1e-9), (100.0, 50.0, 1e-9), (250.0, 50.0, 1e-9), (300.0, None, 0)])
+
+
+def test_bs_7385_2_line_2():
+    # Malam (1993), Tabla 4 y Fig. 9, p. 145. Uniones log-log según Miller et al. (2024), p. 281.
+    _check("BS-7385-2-1993", "line-2", [
+        (0.5, None, 0),
+        (1.0, 2 * math.pi * 1.0 * 0.6, 1e-9),  # desplazamiento constante de 0,6 mm, 1 a 4 Hz
+        (2.0, 7.540, 1e-3),
+        (4.0, 15.0, 1e-9),  # inicio del tramo log-log: 15 mm/s a 4 Hz
+        (8.0, 17.443, 1e-3),
+        (15.0, 20.0, 1e-9),
+        (25.0, 32.23, 1e-2),
+        (40.0, 50.0, 1e-9),
+        (100.0, 50.0, 1e-9),
+        (250.0, 50.0, 1e-9),
+        (300.0, None, 0)])
+
+
+def test_din_4150_3_profile_metadata():
+    p = load_profile("DIN-4150-3-2016")
+    assert p.quantity == "component_max" and p.frequency_methods == ()
+    assert list(p.criteria) == ["line-2", "line-3"]
+    assert all(c.verification == "V2" and "Fig. 1a" in c.reference and "foundation" in c.structure["en"]
+               for c in p.criteria.values())
+
+
+def test_din_4150_3_line_2_foundation():
+    # Miller, Duschlbauer y Spagnol (2024), Fig. 1a, p. 282; rectas en ejes lineales (p. 281).
+    _check("DIN-4150-3-2016", "line-2", [
+        (0.5, None, 0), (1.0, 5.0, 1e-9), (5.0, 5.0, 1e-9), (10.0, 5.0, 1e-9),
+        (30.0, 10.0, 1e-9), (50.0, 15.0, 1e-9), (75.0, 17.5, 1e-9), (100.0, 20.0, 1e-9), (120.0, None, 0)])
+
+
+def test_din_4150_3_line_3_foundation():
+    _check("DIN-4150-3-2016", "line-3", [
+        (0.5, None, 0), (1.0, 3.0, 1e-9), (5.0, 3.0, 1e-9), (10.0, 3.0, 1e-9),
+        (30.0, 5.5, 1e-9), (50.0, 8.0, 1e-9), (75.0, 9.0, 1e-9), (100.0, 10.0, 1e-9), (120.0, None, 0)])
