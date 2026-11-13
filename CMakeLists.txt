@@ -17,6 +17,8 @@ target_include_directories(blastingpy_core INTERFACE
     $<INSTALL_INTERFACE:include>
 )
 target_compile_features(blastingpy_core INTERFACE cxx_std_20)
+# MSVC lee el código como UTF-8 (las cabeceras llevan α, ≤ y rayas en comentarios y textos)
+target_compile_options(blastingpy_core INTERFACE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
 # Bindings Python (nanobind vía scikit-build-core)
 option(BLASTINGPY_BUILD_PYTHON "Build Python bindings" ON)
@@ -93,6 +95,12 @@ if(BLASTINGPY_BUILD_TESTS)
     target_link_libraries(blastingpy_tests PRIVATE
         blastingpy_core
         GTest::gtest_main
+    )
+    # Avisos del compilador solo en las pruebas (sin tratarlos como errores)
+    target_compile_options(blastingpy_tests PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/W4>
+        $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall>
+        $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wextra>
     )
 
     include(GoogleTest)
