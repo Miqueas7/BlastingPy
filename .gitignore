@@ -1,2 +1,52 @@
+# Build artifacts
+build/
+build-tests/
+build-release/
+_build/
+dist/
+wheelhouse/
+*.egg-info/
+*.so
+*.pyd
+*.dll
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Python caches and virtual environments
+__pycache__/
+*.pyc
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# IDE and editor state
+.vs/
+.vscode/
+.idea/
+*.sln
+*.vcxproj*
+
+# Internal working notes (not part of the published repository)
+.claude/
+.superpowers/
+
+# OS files
+.DS_Store
+Thumbs.db
+
 # Documentos de terceros (derechos de autor): viven en OneDrive, TRABAJOS\_Tableros\BlastingPy\referencias
 docs/referencias/
+
+# Research material kept only on the owner's machines (copyright or pending attribution)
+docs/investigacion/pdfs/
+docs/investigacion/papers/
+docs/investigacion/img/
+docs/investigacion/datos_publicos/

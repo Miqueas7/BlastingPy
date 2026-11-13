@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "profile_id": "BS-7385-2-1993",
+  "name": {
+    "en": "BS 7385-2 guide values for building damage from ground-borne vibration",
+    "es": "Valores guía de BS 7385-2 para daño en edificios por vibración del terreno"
+  },
+  "jurisdiction": "GB",
+  "force": "guide",
+  "source": {
+    "citation": "BS 7385-2:1993, Evaluation and measurement for vibration in buildings. Part 2: Guide to damage levels from groundborne vibration (British Standards Institution). Values read in a secondary source, not in the standard: Malam, Table 4 and Fig. 9, p. 145 (1993)",
+    "edition": "1993",
+    "url": "",
+    "note": {
+      "en": "Caveat: Malam wrote the article just before the standard was published and describes the final draft; the values were not checked against the printed standard.",
+      "es": "Reserva: Malam escribió el artículo justo antes de que se publicara la norma y describe el borrador final; los valores no se cotejaron con la norma impresa."
+    }
+  },
+  "quantity": "component_max",
+  "quantity_basis": "Largest of the three orthogonal components, measured at the base of the building (Malam 1993, p. 142).",
+  "frequency_methods": ["zero_crossing", "fourier"],
+  "units": {"velocity": "mm/s", "displacement": "mm"},
+  "criteria": [
+    {
+      "id": "line-1",
+      "kind": "frequency_curve",
+      "structure": {"en": "Line 1: reinforced or framed structures, heavy industrial and commercial buildings", "es": "Línea 1: estructuras reforzadas o aporticadas, edificios industriales y comerciales pesados"},
+      "verification": "V2",
+      "reference": "Malam (1993), Table 4 and Fig. 9, p. 145 (secondary source)",
+      "note": {
+        "en": "Caveat: Malam wrote the article just before the standard was published and describes the final draft; not checked against the printed standard. Domain 4 to 250 Hz; below 4 Hz the source gives no value for line 1, and the result is indeterminate.",
+        "es": "Reserva: Malam escribió el artículo justo antes de que se publicara la norma y describe el borrador final; no se cotejó con la norma impresa. Dominio de 4 a 250 Hz; bajo 4 Hz la fuente no da valor para la línea 1, y el resultado es indeterminado."
+      },
+      "segments": [
+        {"kind": "constant_velocity", "f_min": 4.0, "f_max": 250.0, "value": 50.0}
+      ]
+    },
+    {
+      "id": "line-2",
+      "kind": "frequency_curve",
+      "structure": {"en": "Line 2: unreinforced or light-framed structures, residential or light commercial buildings", "es": "Línea 2: estructuras no reforzadas o de pórtico liviano, edificios residenciales o comerciales livianos"},
+      "verification": "V2",
+      "reference": "Malam (1993), Table 4 and Fig. 9, p. 145 (secondary source); joins read from Miller et al. (2024), p. 281",
+      "note": {
+        "en": "Caveat: Malam wrote the article just before the standard was published and describes the final draft; not checked against the printed standard. Domain 1 to 250 Hz. Below 4 Hz a constant displacement of 0.6 mm (zero to peak) applies. The table only says that the limit rises between the points; the log-log lines are taken from Fig. 9 and from what Miller et al. say about the logarithmic scale. The 0.6 mm displacement gives 15.08 mm/s at 4 Hz and the next segment starts at 15 mm/s: the profile takes 15 mm/s from 4 Hz.",
+        "es": "Reserva: Malam escribió el artículo justo antes de que se publicara la norma y describe el borrador final; no se cotejó con la norma impresa. Dominio de 1 a 250 Hz. Bajo 4 Hz rige un desplazamiento constante de 0,6 mm (cero a pico). La tabla solo dice que el límite sube entre los puntos; las rectas log-log se toman de la Fig. 9 y de lo que dicen Miller et al. sobre la escala logarítmica. El desplazamiento de 0,6 mm da 15,08 mm/s en 4 Hz, y el tramo siguiente arranca en 15 mm/s: el perfil toma 15 mm/s desde 4 Hz."
+      },
+      "segments": [
+        {"kind": "constant_displacement", "f_min": 1.0, "f_max": 4.0, "value": 0.6},
+        {"kind": "loglog", "f_max": 15.0, "value": 15.0, "value_max": 20.0},
+        {"kind": "loglog", "f_max": 40.0, "value": 20.0, "value_max": 50.0},
+        {"kind": "constant_velocity", "f_max": 250.0, "value": 50.0}
+      ]
+    }
+  ]
+}

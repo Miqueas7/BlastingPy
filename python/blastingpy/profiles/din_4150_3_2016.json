@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "profile_id": "DIN-4150-3-2016",
+  "name": {
+    "en": "DIN 4150-3 guide values for the effect of vibration on structures (foundation)",
+    "es": "Valores guía de DIN 4150-3 para el efecto de la vibración en estructuras (cimentación)"
+  },
+  "jurisdiction": "DE",
+  "force": "guide",
+  "source": {
+    "citation": "DIN 4150-3:2016-12, Vibrations in buildings. Part 3: Effects on structures (Deutsches Institut fuer Normung). Values read in a secondary source, not in the standard: Miller, Duschlbauer & Spagnol (2024), Fig. 1a, p. 282",
+    "edition": "2016-12",
+    "url": ""
+  },
+  "quantity": "component_max",
+  "quantity_basis": "Peak component velocity; at the foundation, in all directions (Miller et al. 2024, p. 280).",
+  "frequency_methods": [],
+  "units": {"velocity": "mm/s", "displacement": "mm"},
+  "criteria": [
+    {
+      "id": "line-2",
+      "kind": "frequency_curve",
+      "structure": {"en": "Line 2: residential buildings, foundation, all directions", "es": "Línea 2: edificios residenciales, cimentación, todas las direcciones"},
+      "verification": "V2",
+      "reference": "Miller, Duschlbauer & Spagnol (2024), Fig. 1a, p. 282 (values read from a figure at labelled grid lines)",
+      "note": {
+        "en": "Caveat: the values were read from a figure, at labelled grid lines, and the secondary source does not say which table of the standard they come from. Straight lines on linear axes between 10, 50 and 100 Hz (p. 281). Domain 1 to 100 Hz. Line 1 and the top-floor criteria are not included. The source gives no frequency method.",
+        "es": "Reserva: los valores se leyeron de una figura, en líneas de grilla rotuladas, y la fuente secundaria no dice de qué tabla de la norma salen. Rectas en ejes lineales entre 10, 50 y 100 Hz (p. 281). Dominio de 1 a 100 Hz. La línea 1 y los criterios del último piso no entran. La fuente no indica método de frecuencia."
+      },
+      "segments": [
+        {"kind": "constant_velocity", "f_min": 1.0, "f_max": 10.0, "value": 5.0},
+        {"kind": "linear", "f_max": 50.0, "value": 5.0, "value_max": 15.0},
+        {"kind": "linear", "f_max": 100.0, "value": 15.0, "value_max": 20.0}
+      ]
+    },
+    {
+      "id": "line-3",
+      "kind": "frequency_curve",
+      "structure": {"en": "Line 3: structures of great intrinsic value, foundation, all directions", "es": "Línea 3: estructuras de gran valor intrínseco, cimentación, todas las direcciones"},
+      "verification": "V2",
+      "reference": "Miller, Duschlbauer & Spagnol (2024), Fig. 1a, p. 282 (values read from a figure at labelled grid lines)",
+      "note": {
+        "en": "Caveat: the values were read from a figure, at labelled grid lines, and the secondary source does not say which table of the standard they come from. Straight lines on linear axes between 10, 50 and 100 Hz (p. 281). Domain 1 to 100 Hz. Line 1 and the top-floor criteria are not included. The source gives no frequency method.",
+        "es": "Reserva: los valores se leyeron de una figura, en líneas de grilla rotuladas, y la fuente secundaria no dice de qué tabla de la norma salen. Rectas en ejes lineales entre 10, 50 y 100 Hz (p. 281). Dominio de 1 a 100 Hz. La línea 1 y los criterios del último piso no entran. La fuente no indica método de frecuencia."
+      },
+      "segments": [
+        {"kind": "constant_velocity", "f_min": 1.0, "f_max": 10.0, "value": 3.0},
+        {"kind": "linear", "f_max": 50.0, "value": 3.0, "value_max": 8.0},
+        {"kind": "linear", "f_max": 100.0, "value": 8.0, "value_max": 10.0}
+      ]
+    }
+  ]
+}

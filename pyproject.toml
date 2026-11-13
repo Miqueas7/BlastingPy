@@ -1,0 +1,72 @@
+[build-system]
+requires = ["scikit-build-core>=0.11", "nanobind>=2.0", "hatch-fancy-pypi-readme>=22.3"]  # 0.11: license = "MIT" (PEP 639)
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "blastingpy"
+dynamic = ["readme"]
+version = "0.1.0"
+description = "Blast vibration, airblast and flyrock analysis for mining. C++ core, Python API"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [
+    {name = "Miqueas Quintanilla Ventura", email = "miqueasq@gmail.com"},
+]
+keywords = ["mining", "blasting", "vibration", "ppv", "airblast", "flyrock", "attenuation",
+            "scaled-distance", "engineering"]
+dependencies = ["numpy>=1.24", "pandas>=2.0"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+
+[project.urls]
+Homepage = "https://github.com/Miqueas7/BlastingPy"
+Repository = "https://github.com/Miqueas7/BlastingPy"
+Issues = "https://github.com/Miqueas7/BlastingPy/issues"
+
+[project.optional-dependencies]
+test = ["pytest>=7.0", "hypothesis>=6.0"]
+io = ["openpyxl>=3.1"]
+viz = ["matplotlib>=3.8"]
+
+[tool.scikit-build]
+# PyPI muestra la descripción en inglés y, debajo, la española
+metadata.readme.provider = "scikit_build_core.metadata.fancy_pypi_readme"
+# El sdist lleva lo que la suite necesita (tests, README); la bitácora interna y la guía del agente no
+sdist.exclude = ["docs/", "CLAUDE.md", ".superpowers/"]
+cmake.build-type = "Release"
+cmake.args = ["-DBLASTINGPY_BUILD_PYTHON=ON", "-DBLASTINGPY_BUILD_TESTS=OFF"]
+wheel.packages = ["python/blastingpy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
+# 32 bits fuera: numpy, pandas y matplotlib, que piden las pruebas, ya no publican ruedas de 32 bits
+skip = "pp* *-musllinux* *-win32 *_i686"
+test-requires = "pytest hypothesis openpyxl matplotlib numpy pandas"
+test-command = "pytest {project}/tests/python -q -p no:cacheprovider"
+
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+text = "\n\n---\n\n"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.es.md"

@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "profile_id": "USBM-RI8507-1980",
+  "name": {
+    "en": "USBM RI 8507 safe-level criteria for residential structures",
+    "es": "Criterios de nivel seguro del USBM RI 8507 para viviendas"
+  },
+  "jurisdiction": "US",
+  "force": "guide",
+  "source": {
+    "citation": "Siskind, Stagg, Kopp & Dowding (1980). Structure Response and Damage Produced by Ground Vibration From Surface Mine Blasting. U.S. Bureau of Mines, Report of Investigations 8507",
+    "edition": "1980",
+    "url": "https://stacks.cdc.gov/view/cdc/201726"
+  },
+  "quantity": "component_max",
+  "quantity_basis": "Interpretation: Table 13 and Appendix B only say 'peak particle velocity' and do not state whether it is the largest component or the vector sum. The profile uses the largest component, as USBM Bulletin 656 (which RI 8507 continues) does ('any of three mutually perpendicular directions', p. 73).",
+  "frequency_methods": ["zero_crossing", "fourier"],
+  "units": {"velocity": "in/s", "displacement": "in"},
+  "criteria": [
+    {
+      "id": "appendix-b-drywall",
+      "kind": "frequency_curve",
+      "structure": {"en": "Modern homes, drywall interior", "es": "Casas modernas, interiores de drywall"},
+      "verification": "V1",
+      "reference": "Appendix B, Fig. B-1 and text, pp. 73-74 (PDF pp. 82-83)",
+      "note": {
+        "en": "Breakpoints are computed with v = 2*pi*f*d (3.98, 14.92 and 39.79 Hz); they are not printed. The source text puts the change to 2.0 in/s 'above 40 Hz', so values between 39.79 and 40 Hz are not resolved by the source. Domain 1-100 Hz read from the axis of Fig. B-1.",
+        "es": "Los quiebres se calculan con v = 2*pi*f*d (3,98, 14,92 y 39,79 Hz); no están impresos. El texto de la fuente pone el cambio a 2,0 in/s 'above 40 Hz', así que la fuente no resuelve los valores entre 39,79 y 40 Hz. Dominio de 1 a 100 Hz, leído del eje de la Fig. B-1."
+      },
+      "segments": [
+        {"kind": "constant_displacement", "f_min": 1.0, "f_max": "intersection", "value": 0.030},
+        {"kind": "constant_velocity", "f_max": "intersection", "value": 0.75},
+        {"kind": "constant_displacement", "f_max": "intersection", "value": 0.008},
+        {"kind": "constant_velocity", "f_max": 100.0, "value": 2.0}
+      ]
+    },
+    {
+      "id": "appendix-b-plaster",
+      "kind": "frequency_curve",
+      "structure": {"en": "Older homes, plaster on lath interior", "es": "Casas antiguas, interiores de yeso sobre listones"},
+      "verification": "V1",
+      "reference": "Appendix B, Fig. B-1 and text, pp. 73-74 (PDF pp. 82-83)",
+      "note": {
+        "en": "Breakpoints are computed with v = 2*pi*f*d (2.65, 9.95 and 39.79 Hz); they are not printed. The source text puts the change to 2.0 in/s 'above 40 Hz', so values between 39.79 and 40 Hz are not resolved by the source. Domain 1-100 Hz read from the axis of Fig. B-1.",
+        "es": "Los quiebres se calculan con v = 2*pi*f*d (2,65, 9,95 y 39,79 Hz); no están impresos. El texto de la fuente pone el cambio a 2,0 in/s 'above 40 Hz', así que la fuente no resuelve los valores entre 39,79 y 40 Hz. Dominio de 1 a 100 Hz, leído del eje de la Fig. B-1."
+      },
+      "segments": [
+        {"kind": "constant_displacement", "f_min": 1.0, "f_max": "intersection", "value": 0.030},
+        {"kind": "constant_velocity", "f_max": "intersection", "value": 0.50},
+        {"kind": "constant_displacement", "f_max": "intersection", "value": 0.008},
+        {"kind": "constant_velocity", "f_max": 100.0, "value": 2.0}
+      ]
+    },
+    {
+      "id": "table-13-drywall",
+      "kind": "frequency_curve",
+      "structure": {"en": "Modern homes, drywall interior", "es": "Casas modernas, interiores de drywall"},
+      "verification": "V1",
+      "reference": "Table 13, p. 59 (PDF p. 68)",
+      "note": {
+        "en": "Step at 40 Hz: the high-frequency column reads '>= 40 Hz', so 40 Hz takes 2.0 in/s. The table gives no lower or upper frequency bound. Table 13, note 1: every spectral peak within 6 dB of the predominant one must be checked; any such peak below 40 Hz calls for the low-frequency limit.",
+        "es": "Escalón en 40 Hz: la columna de alta frecuencia dice '>= 40 Hz', así que en 40 Hz rige 2,0 in/s. La tabla no da cota inferior ni superior de frecuencia. Tabla 13, nota 1: hay que revisar todo pico espectral a menos de 6 dB del predominante; si alguno cae bajo 40 Hz, rige el límite de baja frecuencia."
+      },
+      "segments": [
+        {"kind": "constant_velocity", "f_min": 0.0, "f_max": 40.0, "value": 0.75},
+        {"kind": "constant_velocity", "f_max": null, "value": 2.0}
+      ]
+    },
+    {
+      "id": "table-13-plaster",
+      "kind": "frequency_curve",
+      "structure": {"en": "Older homes, plaster on lath interior", "es": "Casas antiguas, interiores de yeso sobre listones"},
+      "verification": "V1",
+      "reference": "Table 13, p. 59 (PDF p. 68)",
+      "note": {
+        "en": "Step at 40 Hz: the high-frequency column reads '>= 40 Hz', so 40 Hz takes 2.0 in/s. The table gives no lower or upper frequency bound. Table 13, note 1: every spectral peak within 6 dB of the predominant one must be checked; any such peak below 40 Hz calls for the low-frequency limit.",
+        "es": "Escalón en 40 Hz: la columna de alta frecuencia dice '>= 40 Hz', así que en 40 Hz rige 2,0 in/s. La tabla no da cota inferior ni superior de frecuencia. Tabla 13, nota 1: hay que revisar todo pico espectral a menos de 6 dB del predominante; si alguno cae bajo 40 Hz, rige el límite de baja frecuencia."
+      },
+      "segments": [
+        {"kind": "constant_velocity", "f_min": 0.0, "f_max": 40.0, "value": 0.50},
+        {"kind": "constant_velocity", "f_max": null, "value": 2.0}
+      ]
+    }
+  ]
+}
