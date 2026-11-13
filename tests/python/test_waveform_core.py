@@ -66,3 +66,23 @@ def test_zero_crossing_domain_errors():
         wf.zero_crossing_frequency(x, 0.0, 1, wf.ZcMethod.WholeSamples)
     with pytest.raises(ValueError, match="parameter 'peak_index'"):
         wf.zero_crossing_frequency(x, 1024.0, 3, wf.ZcMethod.WholeSamples)
+
+
+def test_acceleration_displacement_and_constant_exposed():
+    t = np.arange(4096) / 4096.0
+    x = 10.0 * np.sin(2 * np.pi * 10.0 * t + 0.7)
+    assert wf.standard_gravity_mm_s2 == 9806.65
+    assert {m.name for m in wf.DiffMethod.__members__.values()} == {"Forward", "Central"}
+    a = wf.peak_acceleration(x, 4096.0, wf.DiffMethod.Central)
+    assert a.value == pytest.approx(628.319, rel=0.001)
+    assert a.value / wf.standard_gravity_mm_s2 == pytest.approx(0.064070, rel=0.001)
+    d = wf.peak_displacement(x, 4096.0)
+    assert d.value == pytest.approx(0.159155, rel=0.005)
+    assert np.isnan(wf.peak_displacement(np.array([1.0, 2.0, 3.0]), 100.0).value)
+
+
+def test_acceleration_displacement_domain_errors():
+    with pytest.raises(ValueError, match="parameter 'velocity_mm_s'"):
+        wf.peak_acceleration(np.array([1.0]), 100.0, wf.DiffMethod.Forward)
+    with pytest.raises(ValueError, match="parameter 'sample_rate_hz'"):
+        wf.peak_displacement(np.array([1.0, -1.0]), 0.0)

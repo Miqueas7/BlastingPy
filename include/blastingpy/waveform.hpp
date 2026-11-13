@@ -147,4 +147,88 @@ inline ZcFrequency zero_crossing_frequency(const std::vector<double>& x, double 
     return {f, half_period, above ? ZcStatus::AboveLimit : ZcStatus::Ok};
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Aceleración y desplazamiento pico (a partir de la velocidad)
+//
+// Procedencia (FUENTES_SPRINT2.md, «Cálculo de Instantel»):
+// - Aceleración: ΔV/ΔT entre dos lecturas, sobre toda la onda (Minimate Blaster, p. 4-8) [V1]. Que esas dos lecturas
+//   sean muestras vecinas con diferencia hacia adelante es inferido; la diferencia central es una opción de diseño.
+// - La unidad g se muestra en la pantalla del equipo y en el reporte de muestra [V1, no en §4.5]; 9806.65 mm/s² es la
+//   gravedad estándar, una constante definida y no un valor de la fuente.
+// - Desplazamiento: se integra cada medio ciclo completo como suma de rectángulos Σ(V·Δt) sobre sus muestras
+//   (Δt = 1/fs), se toma el mayor en valor absoluto y se divide entre dos (Minimate Blaster, pp. 4-8 y 4-9) [V1].
+//   Que «dividir entre dos» sea /2 sobre el medio ciclo es inferido. Los medios ciclos cortados por el borde del
+//   registro no cuentan. Un medio ciclo es una racha máxima de muestras con el mismo signo estricto, acotada a ambos
+//   lados por una muestra con signo·x ≤ 0 (la misma regla de cruce que la frecuencia por cruce por cero).
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Cómo se deriva la velocidad: diferencia hacia adelante o central (en los extremos, la unilateral).
+enum class DiffMethod { Forward, Central };
+
+/// Gravedad estándar en mm/s² (constante definida, para pasar la aceleración a g).
+inline constexpr double standard_gravity_mm_s2 = 9806.65;
+
+/// Aceleración pico (mm/s²) por diferencias de la velocidad (mm/s). `index` es la muestra donde se calcula:
+/// Forward usa x[i+1]−x[i] en i; Central usa (x[i+1]−x[i−1])/2 en i (unilateral en las muestras 0 y n−1).
+inline Peak peak_acceleration(const std::vector<double>& velocity_mm_s, double sample_rate_hz, DiffMethod method) {
+    waveform_detail::require_signal(velocity_mm_s, "velocity_mm_s");
+    validation::require(velocity_mm_s.size() >= 2, "velocity_mm_s", "must have at least 2 samples",
+                        static_cast<double>(velocity_mm_s.size()));
+    validation::require_positive(sample_rate_hz, "sample_rate_hz");
+    const std::vector<double>& v = velocity_mm_s;
+    const std::size_t n = v.size();
+    Peak best{-1.0, 0};
+    for (std::size_t i = 0; i < n; ++i) {
+        double a;
+        if (method == DiffMethod::Forward) {
+            if (i + 1 == n) break;  // la última muestra no tiene siguiente
+            a = (v[i + 1] - v[i]) * sample_rate_hz;
+        } else if (i == 0) {
+            a = (v[1] - v[0]) * sample_rate_hz;
+        } else if (i + 1 == n) {
+            a = (v[i] - v[i - 1]) * sample_rate_hz;
+        } else {
+            a = (v[i + 1] - v[i - 1]) * sample_rate_hz / 2.0;
+        }
+        const double m = std::fabs(a);
+        if (m > best.value) best = {m, i};
+    }
+    return best;
+}
+
+/// Desplazamiento pico (mm): mayor |Σ(V·Δt)| de un medio ciclo completo, entre dos, e índice del pico de velocidad
+/// de ese medio ciclo. `value` es NaN (e `index` 0) si no hay ningún medio ciclo completo.
+inline Peak peak_displacement(const std::vector<double>& velocity_mm_s, double sample_rate_hz) {
+    waveform_detail::require_signal(velocity_mm_s, "velocity_mm_s");
+    validation::require(velocity_mm_s.size() >= 2, "velocity_mm_s", "must have at least 2 samples",
+                        static_cast<double>(velocity_mm_s.size()));
+    validation::require_positive(sample_rate_hz, "sample_rate_hz");
+    const std::vector<double>& v = velocity_mm_s;
+    const std::size_t n = v.size();
+    const double dt = 1.0 / sample_rate_hz;
+    Peak best{-1.0, 0};
+    std::size_t i = 0;
+    while (i < n) {
+        if (v[i] == 0.0) {
+            ++i;
+            continue;
+        }
+        const double s = v[i] > 0.0 ? 1.0 : -1.0;
+        const std::size_t first = i;
+        double sum = 0.0;
+        std::size_t peak_i = i;
+        while (i < n && s * v[i] > 0.0) {
+            sum += v[i] * dt;
+            if (std::fabs(v[i]) > std::fabs(v[peak_i])) peak_i = i;
+            ++i;
+        }
+        const bool complete = first > 0 && i < n;  // acotada a ambos lados por una muestra con s·x ≤ 0
+        if (!complete) continue;
+        const double d = std::fabs(sum) / 2.0;
+        if (d > best.value) best = {d, peak_i};
+    }
+    if (best.value < 0.0) return {std::numeric_limits<double>::quiet_NaN(), 0};
+    return best;
+}
+
 }  // namespace blastingpy

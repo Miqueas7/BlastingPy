@@ -159,4 +159,12 @@ NB_MODULE(_blastingpy_core, m) {
     wf.def("zero_crossing_frequency", &zero_crossing_frequency, nb::arg("x"), nb::arg("sample_rate_hz"),
            nb::arg("peak_index"), nb::arg("method"),
            "Frequency 1 / (2 T) of the half cycle containing x[peak_index], between its zero crossings.");
+    nb::enum_<DiffMethod>(wf, "DiffMethod", "How velocity is differentiated into acceleration.")
+        .value("Forward", DiffMethod::Forward, "x[i+1] - x[i] over dt")
+        .value("Central", DiffMethod::Central, "(x[i+1] - x[i-1]) over 2 dt; one-sided at the ends");
+    wf.attr("standard_gravity_mm_s2") = standard_gravity_mm_s2;
+    wf.def("peak_acceleration", &peak_acceleration, nb::arg("velocity_mm_s"), nb::arg("sample_rate_hz"),
+           nb::arg("method"), "Peak |dV/dt| (mm/s^2) of a velocity record (mm/s) and its sample index.");
+    wf.def("peak_displacement", &peak_displacement, nb::arg("velocity_mm_s"), nb::arg("sample_rate_hz"),
+           "Peak displacement (mm): largest complete half-cycle sum(V dt), halved; value is NaN if none is complete.");
 }
