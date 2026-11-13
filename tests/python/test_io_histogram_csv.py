@@ -222,7 +222,7 @@ def test_csv_positive_start_warns_and_zero_pretrigger(tmp_path):
 
 def test_csv_non_uniform_time_is_error(tmp_path):
     t = _T.copy()
-    t[10:] += 0.0004
+    t[10:] += 3 / FS  # tres pasos de salto
     with pytest.raises(ValueError, match="uniform"):
         read_waveform_csv(_csv_file(tmp_path, _csv(time=t)), columns=MAP, units=UNITS, time_column="t")
 
@@ -337,3 +337,41 @@ def test_csv_bom_and_crlf(tmp_path):
     path.write_bytes(b"\xef\xbb\xbf" + _csv(time=_T).replace("\n", "\r\n").encode())
     rec = read_waveform_csv(path, columns=MAP, units=UNITS, time_column="t")
     assert rec.n_samples == N
+
+
+def test_csv_scientific_notation_is_read(tmp_path):
+    text = "X,Y\n1e-05,-3.2E+01\n2.5e+00,4\n"
+    rec = read_waveform_csv(_csv_file(tmp_path, text), columns=MAP, units=UNITS, sample_rate_hz=FS)
+    np.testing.assert_allclose(rec.channels["transverse"], [1e-5, 2.5])
+    np.testing.assert_allclose(rec.channels["vertical"], [-32.0, 4.0])
+    semi = "X;Y\n1,5e-05;-3,2E+01\n2;4\n"
+    rec = read_waveform_csv(_csv_file(tmp_path, semi, "semi.csv"), columns=MAP, units=UNITS, sample_rate_hz=FS)
+    np.testing.assert_allclose(rec.channels["transverse"], [1.5e-5, 2.0])
+    np.testing.assert_allclose(rec.channels["vertical"], [-32.0, 4.0])
+
+
+def test_read_events_still_rejects_scientific_notation(tmp_path):
+    from blastingpy.events import read_events
+    path = tmp_path / "ev.csv"
+    path.write_text("d,q,p\n100,10,1e-1\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="expected a number"):
+        read_events(path, columns={"distance_m": "d", "charge_kg": "q", "ppv_mm_s": "p"}, ppv_kind="vertical")
+
+
+def test_csv_rounded_times_over_long_record_recover_fs(tmp_path):
+    n = 10_000
+    t = np.round(np.arange(n) / FS - 0.25, 6)
+    rng = np.random.default_rng(1)
+    x = np.round(rng.normal(size=n), 4)
+    text = "t,X\n" + "\n".join(f"{float(t[i])!r},{float(x[i])!r}" for i in range(n)) + "\n"
+    rec = read_waveform_csv(_csv_file(tmp_path, text), columns={"transverse": "X"}, units=UNITS, time_column="t")
+    assert rec.sample_rate_hz == pytest.approx(FS, rel=1e-6)
+    assert rec.pretrigger_s == pytest.approx(0.25, abs=1e-6)
+
+
+def test_csv_missing_sample_in_long_record_is_error(tmp_path):
+    n = 10_000
+    t = np.delete(np.round(np.arange(n) / FS, 6), 5000)
+    text = "t,X\n" + "\n".join(f"{float(ti)!r},1.5" for ti in t) + "\n"
+    with pytest.raises(ValueError, match="time_column.*uniform"):
+        read_waveform_csv(_csv_file(tmp_path, text), columns={"transverse": "X"}, units=UNITS, time_column="t")

@@ -791,7 +791,7 @@ def _csv_column(cells, label: str, name: str, decimal) -> np.ndarray:
         if decimal is None and _AMBIGUOUS.match(text):
             raise _param_error("path", f"has '{text}' in {where}, which is ambiguous: the mark may be a decimal or "
                                "a thousands separator; pass decimal=',' or '.'")
-        number = _number(text, decimal)
+        number = _number(text, decimal, scientific=True)
         if number is None or not np.isfinite(number):
             raise _param_error("path", f"has a value that is not a number in {where}: received '{text}'; if the "
                                "decimal mark is not what you expect, pass decimal=',' or '.'")
@@ -807,21 +807,22 @@ def _time_axis(t: np.ndarray, sample_rate_hz, pretrigger_s) -> tuple[float, floa
     """Sample rate, pretrigger and warnings from a time column; explicit arguments must agree with it."""
     if t.size < 2:
         raise _param_error("time_column", "needs at least 2 rows to give the sample rate")
-    dt = np.diff(t)
-    step = float(np.median(dt))
+    idx = np.arange(t.size, dtype=float)
+    step, intercept = np.polyfit(idx, t, 1)  # t = intercept + step * i
+    step = float(step)
     if not step > 0:
-        raise _param_error("time_column", "must be increasing: the median time step is not positive")
-    dev = np.abs(dt - step) / step
-    k = int(np.argmax(dev))
-    if dev[k] > 1e-3:
-        raise _param_error("time_column", f"must have a uniform step: the step before row {k + 3} differs from the "
-                           f"median step {step:g} s by a relative {dev[k]:.3g} (tolerance 1e-3)")
+        raise _param_error("time_column", "must be increasing: the fitted time step is not positive")
+    resid = np.abs(t - (intercept + step * idx))
+    k = int(np.argmax(resid))
+    if resid[k] > 0.25 * step:
+        raise _param_error("time_column", f"must have a uniform step: the time at row {k + 2} is "
+                           f"{resid[k] / step:.2g} steps away from the fitted straight line (tolerance 0.25 step)")
     fs = 1.0 / step
     if sample_rate_hz is not None:
         if not _real(sample_rate_hz) or abs(sample_rate_hz - fs) > 1e-3 * fs:
             raise _param_error("sample_rate_hz", f"is {sample_rate_hz!r} but the time column gives {fs:g} Hz; "
                                "drop the argument or fix the file")
-    t0 = float(t[0])
+    t0 = float(intercept)
     half = step / 2
     warns: list[str] = []
     if t0 < -half:
@@ -848,9 +849,10 @@ def read_waveform_csv(path, *, columns: Mapping[str, str], units: Mapping[str, s
     alias such as ``Tran``) to its column in the file; a mapped column that is missing is an error. ``units`` is
     ``{"geophone": "mm/s" | "in/s", "mic": "Pa" | "psi"}`` (a kind left out is inferred, with a warning).
 
-    With ``time_column`` the sample rate is ``1 / median(dt)`` and the step must be uniform (relative deviation
-    <= 1e-3, so write the times with enough decimals); a negative first time ``t0`` gives ``pretrigger_s = -t0``,
-    ``t0`` near 0 gives 0.0 and ``t0 > 0`` gives 0.0 with a warning. An explicit ``sample_rate_hz`` or
+    With ``time_column`` a straight line ``t = t0 + i / fs`` is fitted by least squares (so times rounded to a few
+    decimals are fine) and every time must lie within a quarter step of it, else ``ValueError``; a negative fitted
+    ``t0`` gives ``pretrigger_s = -t0``, ``t0`` near 0 gives 0.0 and ``t0 > 0`` gives 0.0 with a warning. Numbers may
+    use scientific notation (``1e-05``). An explicit ``sample_rate_hz`` or
     ``pretrigger_s`` must agree with the time column. Without it, ``sample_rate_hz`` is required (never guessed).
 
     Separator and decimal follow ``read_events``: with ``;`` the decimal mark is the comma, with ``,`` it is the
