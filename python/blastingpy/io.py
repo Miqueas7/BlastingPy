@@ -643,6 +643,66 @@ def read_instantel_ascii(path, *, sample_rate_hz: float | None = None, units: Ma
         raise ValueError(f"{exc}{_RENAMED_HINT}") from None
 
 
+# --------------------------------------------------------------------------- miniSEED y SAC (ObsPy)
+
+def read_obspy(path, *, channels: Mapping[str, str], units: Mapping[str, str],
+               counts_per_unit: Mapping[str, float] | None = None,
+               pretrigger_s: float | None = None) -> Record:
+    """Read a miniSEED or SAC file (anything ``obspy.read`` understands) into a :class:`Record`.
+
+    Needs the optional dependency ObsPy: ``pip install blastingpy[seismic]``.
+
+    ``channels`` maps each canonical channel name (``"transverse"``, ``"vertical"``,
+    ``"longitudinal"``, ``"mic"``) to the trace channel code (``stats.channel``, e.g. ``"HHZ"``);
+    a code that is absent from the file or matches more than one trace is an error. ``units`` is
+    ``{"geophone": ..., "mic": ...}`` as in :func:`from_arrays`. With ``counts_per_unit`` (the
+    sensitivity of each named channel, counts per unit), that channel is divided by it before the
+    conversion to SI; without it the samples are taken as already in ``units``.
+
+    All selected traces must share the sample rate (relative 1e-9), the start time (within half a
+    sample period) and the length. ``Record.start`` is the start of the first selected trace, as a
+    naive ``datetime`` in UTC. ``format_evidence`` is ``"user"``: the calibration is the caller's.
+    """
+    try:
+        import obspy
+    except ImportError:
+        raise ImportError("read_obspy needs ObsPy: pip install blastingpy[seismic]") from None
+    if not isinstance(channels, Mapping) or not channels:
+        raise _param_error("channels", "must be a non-empty mapping of channel name to trace channel code")
+    sens = {} if counts_per_unit is None else dict(counts_per_unit)
+    for key, value in sens.items():
+        if key not in channels:
+            raise _param_error("counts_per_unit", f"has key '{key}' that is not in channels")
+        if isinstance(value, bool) or not isinstance(value, (int, float, np.number))                 or not math.isfinite(value) or value <= 0:
+            raise _param_error("counts_per_unit", f"must be finite numbers > 0; got {value!r} for '{key}'")
+
+    stream = obspy.read(str(path))
+    picked = {}
+    for name, code in channels.items():
+        found = [tr for tr in stream if tr.stats.channel == code]
+        if len(found) != 1:
+            raise _param_error("channels", f"code '{code}' for '{name}' matches {len(found)} traces in the file "
+                               f"(codes present: {sorted({tr.stats.channel for tr in stream})}); need exactly one")
+        picked[name] = found[0]
+
+    first_name, first = next(iter(picked.items()))
+    fs = float(first.stats.sampling_rate)
+    for name, tr in picked.items():
+        if abs(tr.stats.sampling_rate - fs) > 1e-9 * fs:
+            raise _param_error("channels", f"must share one sample rate; '{first_name}' has {fs:g} Hz "
+                               f"and '{name}' has {tr.stats.sampling_rate:g} Hz")
+        if abs(tr.stats.starttime - first.stats.starttime) > 0.5 / fs:
+            raise _param_error("channels", f"must share the same start; '{name}' starts "
+                               f"{tr.stats.starttime - first.stats.starttime:+g} s from '{first_name}'")
+        if tr.stats.npts != first.stats.npts:
+            raise _param_error("channels", f"must all have the same length; '{first_name}' has "
+                               f"{first.stats.npts} samples and '{name}' has {tr.stats.npts}")
+
+    data = {name: np.asarray(tr.data, dtype=np.float64) / sens.get(name, 1.0) for name, tr in picked.items()}
+    return _make_record(data, fs, units=units, pretrigger_s=pretrigger_s, start=first.stats.starttime.datetime,
+                        metadata=None, source="obspy", format_evidence="user", warnings=[])
+
+
 # --------------------------------------------------------------------------- histograma de Instantel
 # Formato y evidencia: docs/investigacion/FUENTES_SPRINT2.md, «Formatos de exportación», D (solo el manual).
 
