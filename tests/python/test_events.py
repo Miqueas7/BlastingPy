@@ -191,6 +191,9 @@ def test_template_round_trip(tmp_path, ext):
     cols = {c: c for c in ("distance_m", "charge_kg", "ppv_mm_s", "ppv_kind", "frequency_hz", "date", "point")}
     df = read_events(p, columns=cols)
     assert len(df) == 2 and (df["distance_m"] > 0).all() and df["ppv_kind"].notna().all()
+    # Las filas de ejemplo se pueden comparar con los criterios publicados (vertical no lo era con ninguno).
+    from blastingpy.criteria import evaluate
+    assert (evaluate(df, "USBM-RI8507-1980", "appendix-b-drywall").status != "not_comparable").all()
     with pytest.raises(ValueError, match=r"parameter 'path'"):
         write_events_template(tmp_path / "plantilla.txt")
 
