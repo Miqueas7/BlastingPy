@@ -133,6 +133,28 @@ def test_complies_only_when_the_maximum_component_is_known():
     assert r.status == "exceeds" and r.governing == "longitudinal/segment-1"
 
 
+def test_recorded_value_with_its_own_frequency_is_evaluated():
+    p, c = "USBM-RI8507-1980", "appendix-b-drywall"
+    # Empate entre el pico y la componente presente, a otra frecuencia: el pico se evalúa con frequency_hz.
+    r = evaluate(_ev(ppv_mm_s=20.0, frequency_hz=4.0, ppv_t_mm_s=20.0, freq_t_hz=50.0), p, c).iloc[0]
+    assert r.status == "exceeds" and r.governing == "segment-1" and r.limit_mm_s == pytest.approx(19.05)
+    r = evaluate(_ev(ppv_mm_s=20.0, frequency_hz=50.0, ppv_t_mm_s=20.0, freq_t_hz=50.0), p, c).iloc[0]
+    assert r.status == "complies"
+    # ppv_mm_s vertical junto a ppv_v_mm_s: también se evalúa.
+    comps = dict(ppv_t_mm_s=5.0, freq_t_hz=10.0, ppv_v_mm_s=5.0, freq_v_hz=10.0, ppv_l_mm_s=5.0, freq_l_hz=10.0)
+    r = evaluate(_ev(ppv_kind="vertical", ppv_mm_s=30.0, **comps), p, c).iloc[0]
+    assert r.status == "exceeds" and r.governing == "vertical/segment-1"
+    r = evaluate(_ev(ppv_kind="vertical", ppv_mm_s=0.0, **comps), p, c).iloc[0]
+    assert r.status == "not_comparable" and "ppv_mm_s" in r.reason
+    # Perfil vertical: ppv_mm_s vertical sin ppv_v_mm_s usa freq_v_hz.
+    user = {"profile_id": "U", "quantity": "vertical", "units": {"velocity": "mm/s"},
+            "criteria": [{"id": "f", "kind": "frequency_curve",
+                          "segments": [{"kind": "constant_velocity", "f_min": 0.0, "f_max": 40.0, "value": 10.0},
+                                       {"kind": "constant_velocity", "f_max": None, "value": 20.0}]}]}
+    r = evaluate(_ev(ppv_kind="vertical", ppv_mm_s=15.0, freq_v_hz=50.0, frequency_hz=NAN), user, "f").iloc[0]
+    assert r.status == "complies" and r.limit_mm_s == pytest.approx(20.0) and r.governing == "segment-1"
+
+
 def test_vector_sum_and_vertical_profiles_evaluate_both_values():
     for quantity, column in [("vector_sum", "pvs_mm_s"), ("vertical", "ppv_v_mm_s")]:
         user = {"profile_id": "U", "quantity": quantity, "units": {"velocity": "mm/s"},

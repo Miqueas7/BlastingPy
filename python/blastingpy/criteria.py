@@ -14,13 +14,15 @@ only when that quantity is fully known:
 
 * ``quantity == "component_max"``: each component column present (``ppv_t/v/l_mm_s``) is a candidate with its own
   frequency (``freq_t/v/l_hz``). With ``ppv_kind == "vertical"`` and no ``ppv_v_mm_s``, ``ppv_mm_s`` is the vertical
-  component (``freq_v_hz``, else ``frequency_hz``). With ``ppv_kind == "component_max"``, ``ppv_mm_s`` is one more
-  candidate (with ``frequency_hz``) if no component is present or it is larger than every component present. A
-  ``vector_sum`` ``ppv_mm_s`` is never a candidate here. The maximum component is known only when the three components
+  component (``freq_v_hz``, else ``frequency_hz``). Otherwise a ``ppv_mm_s`` of kind ``component_max`` (or ``vertical``,
+  next to ``ppv_v_mm_s``) is evaluated whenever it can add information: it is larger than every component present (or
+  than ``ppv_v_mm_s``), or ``frequency_hz`` is present; it is then evaluated with ``frequency_hz``. A ``vector_sum``
+  ``ppv_mm_s`` is never a candidate here. The maximum component is known only when the three components
   are present or ``ppv_kind == "component_max"`` with a valid ``ppv_mm_s``; otherwise the missing components count as
   a candidate that could not be evaluated.
 * ``quantity == "vector_sum"`` / ``"vertical"``: ``pvs_mm_s`` / ``ppv_v_mm_s`` if present, and ``ppv_mm_s`` if
-  ``ppv_kind`` is that quantity; both are evaluated when both are present.
+  ``ppv_kind`` is that quantity; both are evaluated when both are present. A vertical ``ppv_mm_s`` uses ``freq_v_hz``
+  (else ``frequency_hz``) when there is no ``ppv_v_mm_s``, and ``frequency_hz`` when there is.
 
 A candidate complies when ``ppv <= limit * (1 + 1e-9)`` (equality complies). The status, in this order:
 
@@ -283,35 +285,46 @@ def _ppv(row: dict, column: str, problems: list) -> float:
     return value
 
 
+def _vertical_frequency(row: dict) -> str:
+    """Frequency column of a vertical ``ppv_mm_s`` that stands for the vertical component."""
+    return "freq_v_hz" if not math.isnan(_value(row, "freq_v_hz")) else "frequency_hz"
+
+
 def _magnitudes(row: dict, quantity: str) -> tuple[list, list]:
     """Candidates [(component label, ppv, frequency, frequency column)] and the problems that block comparing."""
     kind, problems, candidates = row.get("ppv_kind"), [], []
     if quantity == "component_max":
-        absent = []
+        absent, peak = [], math.nan
         for label, p, f in _COMPONENTS:
-            if math.isnan(_value(row, p)) and label == "vertical" and kind == "vertical":
-                p = "ppv_mm_s"  # el PPV del evento es la componente vertical
-                f = "freq_v_hz" if not math.isnan(_value(row, "freq_v_hz")) else "frequency_hz"
             value = _ppv(row, p, problems)
             if not math.isnan(value):
                 candidates.append((label, value, _value(row, f), f))
             elif math.isnan(_value(row, p)):
                 absent.append(label)
-        complete = not absent
-        if kind == "component_max":
+        if kind in ("component_max", "vertical"):
             peak = _ppv(row, "ppv_mm_s", problems)
-            top = max((cand[1] for cand in candidates), default=0.0)
-            complete = complete or not math.isnan(peak)
-            # El pico registrado también se evalúa si supera a las componentes presentes (pueden faltar algunas).
-            if not math.isnan(peak) and peak > top * (1 + _REL_TOL):
-                candidates.append(("", peak, _value(row, "frequency_hz"), "frequency_hz"))
+            if kind == "vertical" and "vertical" in absent:
+                if not math.isnan(peak):  # el PPV del evento es la componente vertical
+                    absent.remove("vertical")
+                    f = _vertical_frequency(row)
+                    candidates.append(("vertical", peak, _value(row, f), f))
+            elif not math.isnan(peak):
+                label = "" if kind == "component_max" else "vertical"
+                top = max((cand[1] for cand in candidates if kind == "component_max" or cand[0] == "vertical"),
+                          default=0.0)
+                # Se evalúa si puede agregar algo: supera a lo presente o trae su propia frecuencia.
+                if peak > top * (1 + _REL_TOL) or not math.isnan(_value(row, "frequency_hz")):
+                    candidates.append((label, peak, _value(row, "frequency_hz"), "frequency_hz"))
+        complete = not absent or (kind == "component_max" and not math.isnan(peak))
         if candidates and not complete:  # solo se cumple si se conoce la componente máxima
             problems.append(f"missing components: {', '.join(absent)}")
         missing = (f"the profile needs the peak component PPV (ppv_kind 'component_max' or columns "
                    f"ppv_t/v/l_mm_s); the event has ppv_kind {kind!r}")
     else:
         column, freq = ("pvs_mm_s", "frequency_hz") if quantity == "vector_sum" else ("ppv_v_mm_s", "freq_v_hz")
-        sources = [(column, freq)] + ([("ppv_mm_s", "frequency_hz")] if kind == quantity else [])
+        # freq_v_hz es de ppv_v_mm_s si está; si no, sirve al ppv_mm_s vertical.
+        own = _vertical_frequency(row) if quantity == "vertical" and math.isnan(_value(row, column)) else "frequency_hz"
+        sources = [(column, freq)] + ([("ppv_mm_s", own)] if kind == quantity else [])
         for p, f in sources:  # ambos se evalúan si están los dos
             value = _ppv(row, p, problems)
             if not math.isnan(value):
