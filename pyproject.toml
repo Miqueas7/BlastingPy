@@ -6,7 +6,7 @@ build-backend = "scikit_build_core.build"
 name = "blastingpy"
 dynamic = ["readme"]
 version = "0.1.0"
-description = "Blast vibration, airblast and flyrock analysis for mining. C++ core, Python API"
+description = "Blast vibration, airblast, flyrock and near-field analysis for mining. C++ core, Python API"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
@@ -14,7 +14,7 @@ authors = [
     {name = "Miqueas Quintanilla Ventura", email = "miqueasq@gmail.com"},
 ]
 keywords = ["mining", "blasting", "vibration", "ppv", "airblast", "flyrock", "attenuation",
-            "scaled-distance", "engineering"]
+            "scaled-distance", "near-field", "engineering"]
 dependencies = ["numpy>=1.24", "pandas>=2.0"]
 classifiers = [
     "Development Status :: 3 - Alpha",

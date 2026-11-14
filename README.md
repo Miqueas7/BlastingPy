@@ -74,7 +74,7 @@ seismograph's own software shows.
 
 - **The sample rate is never guessed.** If the file lacks it and you do not pass `sample_rate_hz`, the reader raises an
   error. `read_waveform_csv` with a time column fits the rate by least squares and refuses a non-uniform column; a
-  fitted rate within 1e-6 of a whole number, and a pretrigger within 1e-6 of a sample period of a whole sample, are
+  fitted rate within 1e-6 of a whole number, and a pretrigger within 1e-3 of a sample period of a whole sample, are
   taken as those values (times rounded to the microsecond give 1024.0000003 Hz). SAC stores the sample interval
   rounded, so a 1024 Hz SAC reads as about 1023.54 Hz: `read_obspy` keeps the file's rate, adds a warning that names
   the whole number, and takes `sample_rate_hz=` (it must agree with the file within 0.1 %).

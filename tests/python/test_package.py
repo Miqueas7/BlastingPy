@@ -7,6 +7,20 @@ def test_version_and_core():
     assert info.method_id == "X" and info.verification == blastingpy.Verification.Secondary
 
 
+def test_version_is_the_same_everywhere():
+    # pyproject, CMake y CITATION.cff se cambian a mano al publicar; esta prueba evita que uno se quede atrás.
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    found = {
+        "pyproject.toml": re.search(r'^version = "(.+)"', (root / "pyproject.toml").read_text("utf-8"), re.M),
+        "CMakeLists.txt": re.search(r"project\(blastingpy\s+VERSION (\S+)", (root / "CMakeLists.txt").read_text("utf-8")),
+        "CITATION.cff": re.search(r'^version: "(.+)"', (root / "CITATION.cff").read_text("utf-8"), re.M),
+    }
+    assert {k: m and m.group(1) for k, m in found.items()} == dict.fromkeys(found, blastingpy.__version__)
+
+
 MODULES = ("units", "events", "attenuation", "criteria", "datasets", "plotting", "io", "waveform", "airblast",
            "flyrock", "nearfield")
 

@@ -76,7 +76,7 @@ que muestra el software de tu sismógrafo.
 
 - **La frecuencia de muestreo nunca se adivina.** Si el archivo no la trae y no pasas `sample_rate_hz`, el lector da
   error. `read_waveform_csv` con columna de tiempo ajusta la frecuencia por mínimos cuadrados y rechaza una columna no
-  uniforme; una frecuencia ajustada a menos de 1e-6 de un entero, y un predisparo a menos de 1e-6 de un periodo de
+  uniforme; una frecuencia ajustada a menos de 1e-6 de un entero, y un predisparo a menos de 1e-3 de un periodo de
   muestreo de una muestra entera, se toman como esos valores (tiempos redondeados al microsegundo dan
   1024,0000003 Hz). SAC guarda el paso de muestreo redondeado, así que un SAC de 1024 Hz se lee como 1023,54 Hz:
   `read_obspy` se queda con la frecuencia del archivo, agrega un aviso que nombra el entero y acepta `sample_rate_hz=`

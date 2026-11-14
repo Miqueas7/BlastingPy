@@ -56,9 +56,11 @@ _RES_TOLERANCE = 0.03
 # Tolerancia de la frecuencia de muestreo de un archivo frente a la que da el usuario (elección de diseño, R1): SAC
 # redondea el paso al microsegundo, y a 1024 Hz eso es 0,05 %.
 _RATE_TOLERANCE = 1e-3
-# Redondeo del ajuste de una columna de tiempo (R2, elección de diseño): por debajo de 1e-6 (relativo en fs, en
-# periodos de muestreo en el predisparo) la diferencia es menor que la resolución del tiempo y no se avisa.
+# Redondeo del ajuste de una columna de tiempo (R2, elección de diseño): por debajo de 1e-6 relativo en fs y de 1e-3
+# periodos de muestreo en el predisparo (a 1024 sps, ~1 µs, la resolución de tiempos con 6 decimales) la diferencia
+# no se ve en el archivo y no se avisa.
 _SNAP = 1e-6
+_SNAP_SAMPLE = 1e-3
 _RES_GEOPHONE = (("mm/s", 0.00788), ("in/s", 0.00031))
 _RES_MIC = (("Pa", 0.0156),)
 
@@ -991,7 +993,7 @@ def _time_axis(t: np.ndarray, sample_rate_hz, pretrigger_s) -> tuple[float, floa
             warns.append(f"the first sample is at t = {t0:g} s: the time axis is shifted to start at 0 and "
                          "pretrigger_s is 0.0")
     whole = round(pre * fs)
-    if abs(pre * fs - whole) <= _SNAP:  # R2: a la muestra entera si está a menos de 1e-6 de un periodo de muestreo
+    if abs(pre * fs - whole) <= _SNAP_SAMPLE:  # R2: a la muestra entera si está a menos de 1e-3 de periodo
         pre = whole / fs
     if pretrigger_s is not None:
         if not _real(pretrigger_s) or abs(pretrigger_s - pre) > half:
@@ -1013,7 +1015,7 @@ def read_waveform_csv(path, *, columns: Mapping[str, str], units: Mapping[str, s
     With ``time_column`` a straight line ``t = t0 + i / fs`` is fitted by least squares (so times rounded to a few
     decimals are fine) and every time must lie within a quarter step of it, else ``ValueError``; a negative fitted
     ``t0`` gives ``pretrigger_s = -t0``, ``t0`` near 0 gives 0.0 and ``t0 > 0`` gives 0.0 with a warning. A fitted
-    rate within 1e-6 (relative) of a whole number is taken as that number, and a pretrigger within 1e-6 of a sample
+    rate within 1e-6 (relative) of a whole number is taken as that number, and a pretrigger within 1e-3 of a sample
     period of a whole number of samples as that time (times rounded to the microsecond give 1024.0000003 Hz). Numbers may
     use scientific notation (``1e-05``). An explicit ``sample_rate_hz`` or
     ``pretrigger_s`` must agree with the time column. Without it, ``sample_rate_hz`` is required (never guessed).
