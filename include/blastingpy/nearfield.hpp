@@ -55,9 +55,9 @@ enum class HpModel { Original, Niosh };
 
 namespace detail {
 
-/// Cuadratura adaptativa Gauss-Kronrod G7K15. El integrando debe ser suave en cada subintervalo.
+/// Un panel Gauss-Kronrod de 15 puntos sobre [a, b].
 template <class F>
-double gk15(const F& f, double a, double b, double abs_tol, int depth) {
+double gk15(const F& f, double a, double b) {
     static const double xgk[8] = {0.991455371120812639206854697526329, 0.949107912342758524526189684047851,
                                   0.864864423359769072789712788640926, 0.741531185599394439863864773280788,
                                   0.586087235467691130294144838258730, 0.405845151377397166906606412076961,
@@ -66,30 +66,40 @@ double gk15(const F& f, double a, double b, double abs_tol, int depth) {
                                   0.104790010322250183839876322541518, 0.140653259715525918745189590510238,
                                   0.169004726639267902826583426598550, 0.190350578064785409913256402421014,
                                   0.204432940075298892414161999234649, 0.209482141084727828012999174891714};
-    static const double wg[4] = {0.129484966168869693270611432679082, 0.279705391489276667901467771423780,
-                                 0.381830050505118944950369775488975, 0.417959183673469387755102040816327};
     const double c = 0.5 * (a + b), h = 0.5 * (b - a);
-    const double fc = f(c);
-    double k = wgk[7] * fc, g = wg[3] * fc;
-    for (int j = 0; j < 7; ++j) {
-        const double v = f(c - h * xgk[j]) + f(c + h * xgk[j]);
-        k += wgk[j] * v;
-        if (j % 2 == 1) g += wg[j / 2] * v;
-    }
-    k *= h;
-    g *= h;
-    if (depth <= 0 || std::fabs(k - g) <= abs_tol) return k;
-    return gk15(f, a, c, 0.5 * abs_tol, depth - 1) + gk15(f, c, b, 0.5 * abs_tol, depth - 1);
+    double k = wgk[7] * f(c);
+    for (int j = 0; j < 7; ++j) k += wgk[j] * (f(c - h * xgk[j]) + f(c + h * xgk[j]));
+    return k * h;
 }
 
-/// Integra f sobre [a, b], partiendo en `split` si cae dentro (el pico del integrando está en z' = z).
-/// Tolerancia absoluta 1e-11 × una estimación gruesa de la integral (error relativo ~1e-10).
-template <class F>
-double integrate(const F& f, double a, double b, double split) {
-    const double s = (split > a && split < b) ? split : 0.5 * (a + b);
-    const double rough = std::fabs(gk15(f, a, s, 1e300, 0)) + std::fabs(gk15(f, s, b, 1e300, 0));
-    const double tol = 1e-11 * rough;
-    return gk15(f, a, s, 0.5 * tol, 60) + gk15(f, s, b, 0.5 * tol, 60);
+/// ∫_lo^hi (r·cosh t)^q dt para 0 ≤ lo ≤ hi, con q = 1 − β/α. Paneles de ancho ≤ min(1, 1/|q|) (el integrando es
+/// analítico y monótono, de escala ~1/|q|); tope duro de 4000 paneles. El exponente se arma con log1p(e^(−2t)) para
+/// no desbordar con t grande.
+inline double cosh_power_integral(double r, double q, double lo, double hi) {
+    if (hi <= lo) return 0.0;
+    const double ln_r = std::log(r);
+    auto g = [&](double t) { return std::exp(q * (ln_r + t - 0.693147180559945309 + std::log1p(std::exp(-2.0 * t)))); };
+    const double width = std::min(1.0, 1.0 / std::max(std::fabs(q), 1e-3));
+    const int n = static_cast<int>(std::min(4000.0, std::ceil((hi - lo) / width)));
+    double sum = 0.0;
+    for (int i = 0; i < n; ++i) sum += gk15(g, lo + (hi - lo) * i / n, lo + (hi - lo) * (i + 1) / n);
+    return sum;
+}
+
+/// ∫ dz'/(r² + (z' − z)²)^(β/(2α)) sobre [z_start, z_end] con r > 0, por u = r·sinh t.
+inline double original_integral(double alpha, double beta, double z_start, double z_end, double r, double z) {
+    const double q = 1.0 - beta / alpha;
+    const double t1 = std::asinh((z_start - z) / r), t2 = std::asinh((z_end - z) / r);
+    if (t1 < 0.0 && t2 > 0.0) return cosh_power_integral(r, q, 0.0, -t1) + cosh_power_integral(r, q, 0.0, t2);
+    if (t1 >= 0.0) return cosh_power_integral(r, q, t1, t2);
+    return cosh_power_integral(r, q, -t2, -t1);
+}
+
+/// r = 0: ∫|u|^(−β/α) du entre u1 y u2 del mismo lado (0 < a ≤ b en valor absoluto), forma cerrada.
+inline double axis_integral(double alpha, double beta, double near_abs, double far_abs) {
+    const double e = 1.0 - beta / alpha;
+    if (std::fabs(e) < 1e-12) return std::log(far_abs / near_abs);
+    return (std::pow(far_abs, e) - std::pow(near_abs, e)) / e;
 }
 
 inline void check_constants(double k, double alpha, double beta, double linear_charge) {
@@ -130,7 +140,9 @@ inline double hp_term(double linear_charge_kg_m, double z_start, double z_end, d
     validation::require_positive(linear_charge_kg_m, "linear_charge_kg_m");
     detail::check_geometry(z_start, z_end, r, z);
     validation::require_positive(r, "r");
-    return linear_charge_kg_m / r * (std::atan((z_end - z) / r) + std::atan((z - z_start) / r));
+    // atan(x) + atan(y) = atan2(x + y, 1 − x·y): no cancellation when the point is far from the span at small r.
+    const double x = (z_end - z) / r, y = (z - z_start) / r;
+    return linear_charge_kg_m / r * std::atan2(x + y, 1.0 - x * y);
 }
 
 /// K·[ℓ·∫ dz'/(r² + (z' − z)²)^(β/(2α))]^α (NIOSH ec. 5). Sobre el eje dentro del tramo cargado diverge: error de dominio.
@@ -142,15 +154,18 @@ inline double hp_original(double k, double alpha, double beta, double linear_cha
     validation::require(!(on_charge && beta >= alpha), "r",
                         "must be > 0 when z lies within the charged span and beta >= alpha (the integral diverges)", r);
     if (on_charge) {  // beta < alpha: integrable singularity, closed form of the integral of |u|^(-beta/alpha)
-        const double e = 1.0 - beta / alpha;
-        const double integral = (std::pow(z_end - z, e) + std::pow(z - z_start, e)) / e;
+        const double integral = detail::axis_integral(alpha, beta, 0.0, z_end - z) +
+                                detail::axis_integral(alpha, beta, 0.0, z - z_start);
         return k * std::pow(linear_charge_kg_m * integral, alpha);
     }
-    if (r > 0.0 && std::fabs(beta - 2.0 * alpha) <= 1e-12)
+    if (r == 0.0) {  // outside the span (on it, handled above): both ends on the same side of z
+        const double u1 = std::fabs(z_start - z), u2 = std::fabs(z_end - z);
+        const double integral = detail::axis_integral(alpha, beta, std::min(u1, u2), std::max(u1, u2));
+        return k * std::pow(linear_charge_kg_m * integral, alpha);
+    }
+    if (std::fabs(beta - 2.0 * alpha) <= 1e-12)
         return k * std::pow(hp_term(linear_charge_kg_m, z_start, z_end, r, z), alpha);
-    const double p = beta / (2.0 * alpha), r2 = r * r;
-    auto f = [&](double zp) { return std::pow(r2 + (zp - z) * (zp - z), -p); };
-    const double integral = detail::integrate(f, z_start, z_end, z);
+    const double integral = detail::original_integral(alpha, beta, z_start, z_end, r, z);
     return k * std::pow(linear_charge_kg_m * integral, alpha);
 }
 
@@ -170,7 +185,11 @@ inline double hp_niosh(double k, double alpha, double beta, double linear_charge
 }
 
 /// Distancia radial r donde el PPV baja a ppv_limit, a la altura z (bisección en (1e-9, 1e4] m; tolerancia 1e-9 m).
-/// Con Original y β ≥ α el PPV crece sin tope sobre el tramo cargado; con β < α es finito en el eje y también puede dar NaN.
+/// La bisección vale porque el PPV no crece con r en los dos modelos: el integrando (r² + u²)^(−p) baja con r en cada u,
+/// y R̄ sube con r.
+/// Con Original sobre el tramo cargado y β > α el PPV crece sin tope hacia r → 0, así que hay solución; con β = α la
+/// divergencia es logarítmica y un límite muy grande aún puede dar NaN. Con β < α es finito en el eje (puede dar NaN),
+/// y fuera del tramo el PPV en r = 0 también es finito.
 /// NaN si el PPV no llega al límite (en r → 0 queda por debajo, o a 1e4 m sigue por encima).
 inline double hp_damage_extent(HpModel model, double k, double alpha, double beta, double linear_charge_kg_m,
                                double z_start, double z_end, double z, double ppv_limit_mm_s) {

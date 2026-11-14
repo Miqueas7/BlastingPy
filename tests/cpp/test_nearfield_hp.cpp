@@ -82,6 +82,26 @@ TEST(NearfieldHp, AxisWithBetaBelowAlphaIsFinite) {  // R13, condition derived h
     EXPECT_THROW(nf::hp_original(k, 0.5, 1.0, q, 0, 4, 0, 1), std::invalid_argument);  // beta >= alpha
 }
 
+TEST(NearfieldHp, QuadratureSmallRNearSpanEnds) {  // fix round 1: peak on or just outside the endpoints
+    const double a = 0.9, b = 1.8, k = 300, q = 1.0, z0 = 0, z1 = 3;
+    for (double r : {1e-8, 1e-6, 1e-3})
+        for (double z : {z1, z0, z1 + 1e-6, -3.0, 0.0}) {
+            const double exact = k * std::pow(nf::hp_term(q, z0, z1, r, z), a);
+            expect_rel(nf::hp_original(k, a, b * (1 + 1e-11), q, z0, z1, r, z), exact, 1e-8);
+        }
+}
+
+TEST(NearfieldHp, SmallRAgainstAxisClosedFormOutsideSpan) {
+    const double axis = nf::hp_original(700, 0.7, 1.5, 1, -1.5, 1.5, 0, -3);
+    expect_rel(nf::hp_original(700, 0.7, 1.5, 1, -1.5, 1.5, 1e-8, -3), axis, 1e-6);
+}
+
+TEST(NearfieldHp, DamageExtentAtChargeEnd) {
+    const double ext = nf::hp_damage_extent(nf::HpModel::Original, 700, 0.7, 1.5, 1, -1.5, 1.5, 1.5, 2000);
+    EXPECT_TRUE(std::isfinite(ext));
+    EXPECT_GT(ext, 0.0);
+}
+
 TEST(NearfieldHp, Domain) {
     const double nan = std::numeric_limits<double>::quiet_NaN();
     // on the axis inside the charged span: the original model diverges
