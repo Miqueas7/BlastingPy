@@ -8,8 +8,10 @@ El caso de uso central: al terminar una campaña de monitoreo, el ingeniero de v
 carga máxima por retardo y verifica el resultado contra un criterio normativo, indicando la edición, la tabla, la
 magnitud y el método de frecuencia que usó.
 
-**Estado:** en desarrollo, sin publicar (versión 0.1.0). Los sprints 1 y 2 de 5 están completos: tabla de eventos, ley de
-atenuación, carga máxima y veredicto de cumplimiento, y lectura de registros del sismógrafo (forma de onda, PPV, suma vectorial, frecuencia). El paquete no está en PyPI y el repositorio es privado.
+**Estado:** en desarrollo, sin publicar (versión 0.1.0). Los sprints 1 a 4 de 5 están completos: tabla de eventos, ley de
+atenuación, carga máxima y veredicto de cumplimiento, lectura de registros del sismógrafo (forma de onda, PPV, suma
+vectorial, frecuencia), sobrepresión de aire y proyección de rocas (modelos publicados de alcance, comparación por pozo y
+distancia de despeje). El paquete no está en PyPI y el repositorio es privado.
 
 ## Instalación (desde el repositorio)
 
@@ -146,6 +148,51 @@ Las dos ecuaciones del BLEP salen de ajustes de 0,1 Hz (lo dice RI 8485; el BLEP
 fuente secundaria.
 
 No entran: la corrección por viento, los límites de confort australianos y AS 2187.2 desde la norma misma.
+
+## Flyrock
+
+`blastingpy.flyrock` trae los modelos publicados de proyección de rocas, una tabla comparativa por pozo y la distancia de
+despeje. Los hechos, las páginas y las marcas están en
+[docs/investigacion/FUENTES_SPRINT4.md](docs/investigacion/FUENTES_SPRINT4.md).
+
+```python
+import pandas as pd
+from blastingpy import flyrock
+
+holes = pd.DataFrame({"diameter_mm": [165.0, 165.0], "burden_m": [4.0, 3.2], "stemming_m": [3.0, 2.5],
+                      "linear_charge_kg_m": [18.2, 18.2], "hole_angle_from_vertical_deg": [10.0, 10.0]})
+table = flyrock.compare(holes, k=27.0)               # alcances en m, una fila por pozo
+worst = table["max_model_m"].max()                   # el peor pozo, mayor alcance entre los modelos
+clear = flyrock.clearance(worst, target="people", regulation="PE-DS024-2016-EM")
+print(clear.distance_m, clear.governs)
+```
+
+Una versión completa y ejecutable, con una tabla de pozos sintética, está en [examples/04-flyrock](examples/04-flyrock/).
+
+- **Ningún modelo trae margen de seguridad; `clearance` lo agrega:** factor 2 para equipos y 4 para personas (Richards y Moore), o un factor propio >= 1.
+- **Mínimo peruano:** DS 024-2016-EM art. 267 a), modificado por el DS 034-2023-EM: radio de 500 m cuando la roca puede proyectarse 360°, y en voladuras de banco al menos 500 m en la dirección en que la voladura lanza. Rige para la evacuación de los trabajadores (personas, no equipos); el resultado dice cuál manda, el modelo o el reglamento (`governs`). Reportar el mayor entre el alcance con factor y 500 m es una decisión de diseño, no el texto del reglamento.
+- **`k` es obligatorio** (constante del sitio de Richards y Moore): 13,5 para roca competente blanda, 27 para roca competente dura; el rango de los datos publicados es 15 a 37. Un `k` fuera de [13,5, 37] da un aviso (el alcance va con k²).
+- **Tabla de pozos:** columnas obligatorias `diameter_mm`, `burden_m`, `stemming_m`, `linear_charge_kg_m` (o `explosive_density_kg_m3`, 300-2000 kg/m³, para calcularla con el pozo lleno); opcionales `charge_length_m`, `hole_angle_from_vertical_deg`, `powder_factor_kg_m3` (alcance de Lundborg por factor de carga) y `sdob_m_kg13` (McKenzie, en m/kg^(1/3)). Un NaN en una columna opcional quiere decir «no se dio para esa fila».
+- **`max_model_m`** es el mayor alcance entre los modelos de cada pozo; `compare` avisa de los pozos donde pasa del doble de `rm_max_m`. El despeje de la voladura lo manda su peor pozo, y elegir el modelo es decisión del ingeniero: `clearance` recibe un solo alcance y lo dice en sus notas.
+- **Avisos donde el resultado puede salir corto:** el alcance de Lundborg por factor de carga menor que su máximo (una correlación con factor de carga tiende a subestimar, Roth 1979), un SDoB mayor de 2,4 (¿ft/lb^(1/3) en vez de m/kg^(1/3)?), un taladro vertical, las ecuaciones calibradas de Roth cerca de su c/m mínimo y una carga lineal que implica una densidad menor de 300 kg/m³. Una densidad en g/cc es error.
+- **Columna de carga menor de 1 m:** `compare` usa la masa real de la carga (kg) en vez de la carga lineal, como prescriben Richards y Moore, y avisa.
+- **El ángulo del taladro** se mide desde la vertical. Un taladro vertical da 0 m de eyección de taco, con un aviso (la fuente dice que los verticales necesitan un ajuste).
+- **Los diámetros van en mm** (la fuente de Lundborg usa pulgadas; la librería convierte y rechaza valores que parecen pulgadas o metros).
+- Los modelos son estimaciones distintas, no un consenso: nada los promedia ni elige uno.
+
+| Modelo | Qué estima | Entradas | Marca | Fuente leída |
+|---|---|---|---|---|
+| Balística, `FLY-BALLISTIC` (`range_level`, `max_range_level`, `range_to_height`, `max_height`, `velocity_for_range`) | Alcance y altura sin arrastre | Velocidad, ángulo de lanzamiento | V1 | Roth 1979 ecs. (1)-(3), (5); Richards y Moore ecs. [4]-[5]; Moore y Richards 2005 ecs. [7], [9], [10] |
+| Richards y Moore, `FLY-RM-FACE`, `FLY-RM-CRATER`, `FLY-RM-STEMMING` (`rm_face_burst`, `rm_cratering`, `rm_stemming_ejection`, `rm_min_confinement`) | Alcance máximo por frente, cráter y eyección de taco; burden o taco mínimo | `k`, carga (kg/m), burden, taco, ángulo | V1 | Richards y Moore, ISEE, ecs. [6], [7a]-[7c] |
+| Lundborg, `FLY-LUNDBORG-MAX`, `FLY-LUNDBORG-Q` (`lundborg_max_range`, `lundborg_optimal_fragment`, `lundborg_range`) | Alcance máximo y fragmento óptimo; alcance por factor de carga | Diámetro (mm), factor de carga | V2 | Reexpresado por Richards y Moore, McKenzie 2018 y Szendrei y Tose 2022; originales no leídos |
+| McKenzie 2018, `FLY-MCKENZIE-2018` (`mckenzie_max_range`) | Alcance máximo | SDoB (lo das tú), diámetro | V1 | Resumen de McKenzie 2018, lámina 11, solo la versión 2018 |
+| Roth, `FLY-ROTH-GURNEY`, `FLY-ROTH-CAL` (`roth_charge_mass_ratio`, `roth_gurney_velocity`, `roth_launch_velocity`, `roth_calibrated_velocity`, `roth_reference_gurney_velocity`) | Velocidad de lanzamiento desde c/m y la velocidad de Gurney; ecuaciones calibradas | Carga lineal, densidad de la roca, burden, velocidad de detonación | V1 | Roth 1979, USBM OFR 77-81, ecs. (7)-(10), (13), (13a), (14), (17) |
+
+`flyrock.info(flyrock.Model.X)` da el id, la marca y la cita de cada uno, y `compare` los lleva en `attrs`.
+
+**Críticas publicadas** (`attrs["critiques"]`): los modelos sin arrastre pueden sobrestimar el alcance en factores de 2 a 8; Lundborg vale para fragmentos esféricos del tamaño óptimo; McKenzie hereda la calibración de Lundborg (Szendrei y Tose 2022, JSAIMM 122(12), pp. 726-731); una correlación con factor de carga tiende a subestimar el alcance (Roth 1979, pp. 10-11, 29-31).
+
+**No entra, y por qué:** el coeficiente de McKenzie (2009) y la definición de SDoB (ninguna fuente leída la da, así que el SDoB lo pones tú), el tamaño de fragmento y el taco mínimo de McKenzie, las curvas gráficas y la correlación de banco de Roth, escalar las ecuaciones calibradas de Roth a otros explosivos (la fuente no dice la regla y su factor impreso parece invertido), las trayectorias con arrastre, la forma de la zona de despeje y un lector de la tabla de pozos desde archivo (se pasa un DataFrame; pandas ya lee CSV y Excel).
 
 ## Convenciones
 

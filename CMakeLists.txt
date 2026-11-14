@@ -95,6 +95,8 @@ if(BLASTINGPY_BUILD_TESTS)
         tests/cpp/test_waveform_peaks.cpp
         tests/cpp/test_waveform_zero_crossing.cpp
         tests/cpp/test_waveform_derived.cpp
+        tests/cpp/test_flyrock_ballistics.cpp
+        tests/cpp/test_flyrock_models.cpp
     )
     target_link_libraries(blastingpy_tests PRIVATE
         blastingpy_core

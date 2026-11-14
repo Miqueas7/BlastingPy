@@ -7,8 +7,9 @@ The central use case: a blasting engineer ends a monitoring campaign with a tabl
 delay, PPV, frequency). BlastingPy fits the attenuation law of the site, computes the maximum charge per delay and
 checks the result against a regulatory criterion, stating the edition, table, magnitude and frequency method used.
 
-**Status:** in development, unpublished (version 0.1.0). Sprints 1 and 2 of 5 are complete: events table, attenuation law,
-maximum charge and compliance verdict, and reading seismograph records (waveform, PPV, vector sum, frequency). The package is not on PyPI and the repository is private.
+**Status:** in development, unpublished (version 0.1.0). Sprints 1 to 4 of 5 are complete: events table, attenuation law,
+maximum charge and compliance verdict, reading seismograph records (waveform, PPV, vector sum, frequency), airblast, and
+flyrock (published range models, per-hole comparison and clearance distance). The package is not on PyPI and the repository is private.
 
 ## Install (from the repository)
 
@@ -142,6 +143,51 @@ BLEP's two equations come from 0.1 Hz fits (RI 8485 states that fit; BLEP itself
 the equation's system differs from the limit's. AS 2187.2 is [V2], from a single secondary source.
 
 Not included: wind correction, the Australian comfort limits and AS 2187.2 from the standard itself.
+
+## Flyrock
+
+`blastingpy.flyrock` carries the published rock-projection models, a per-hole comparison table and the clearance
+distance. The facts, pages and marks are in
+[docs/investigacion/FUENTES_SPRINT4.md](docs/investigacion/FUENTES_SPRINT4.md).
+
+```python
+import pandas as pd
+from blastingpy import flyrock
+
+holes = pd.DataFrame({"diameter_mm": [165.0, 165.0], "burden_m": [4.0, 3.2], "stemming_m": [3.0, 2.5],
+                      "linear_charge_kg_m": [18.2, 18.2], "hole_angle_from_vertical_deg": [10.0, 10.0]})
+table = flyrock.compare(holes, k=27.0)               # ranges in m, one row per hole
+worst = table["max_model_m"].max()                   # the worst hole, largest range across the models
+clear = flyrock.clearance(worst, target="people", regulation="PE-DS024-2016-EM")
+print(clear.distance_m, clear.governs)
+```
+
+A complete, runnable version with a synthetic hole table is in [examples/04-flyrock](examples/04-flyrock/).
+
+- **No model carries a safety margin; `clearance` adds it:** factor 2 for equipment and 4 for people (Richards & Moore), or your own factor >= 1.
+- **Peruvian minimum:** DS 024-2016-EM art. 267 a), as amended by DS 034-2023-EM: a 500 m radius when rock can be projected through 360 degrees, and in bench blasts at least 500 m in the direction the blast throws. It applies to the evacuation of workers (people, not equipment); the result says which of the model and the regulation governs (`governs`). Reporting the larger of the factored range and 500 m is a design decision, not the text of the regulation.
+- **`k` is required** (Richards & Moore site constant): 13.5 for soft competent rock, 27 for hard competent rock; the published data range is 15 to 37. A `k` outside [13.5, 37] gives a warning (the range goes with k²).
+- **Hole table:** required columns `diameter_mm`, `burden_m`, `stemming_m`, `linear_charge_kg_m` (or `explosive_density_kg_m3`, 300-2000 kg/m3, to compute it for a full hole); optional `charge_length_m`, `hole_angle_from_vertical_deg`, `powder_factor_kg_m3` (Lundborg's range by powder factor) and `sdob_m_kg13` (McKenzie, in m/kg^(1/3)). A NaN in an optional column means "not given for that row".
+- **`max_model_m`** is the largest range across the models of each hole; `compare` warns about the holes where it is more than twice `rm_max_m`. The blast's clearance is governed by its worst hole, and choosing the model is the engineer's decision: `clearance` takes one range and says so in its notes.
+- **Warnings where the result can come out too short:** Lundborg's powder-factor range below its maximum (a powder-factor correlation tends to underestimate, Roth 1979), an SDoB above 2.4 (ft/lb^(1/3) instead of m/kg^(1/3)?), a vertical hole, Roth's calibrated equations near their minimum c/m, and a linear charge implying a density below 300 kg/m3. A density in g/cc is an error.
+- **Charge column shorter than 1 m:** `compare` uses the actual charge mass (kg) instead of the linear charge, as Richards & Moore prescribe, and warns.
+- **Hole angle** is measured from the vertical. A vertical hole gives 0 m of stemming ejection, with a warning (the source says vertical holes need an adjustment).
+- **Diameters are in mm** (the Lundborg source uses inches; the library converts and rejects values that look like inches or metres).
+- The models are different estimates, not a consensus: nothing averages them or picks one.
+
+| Model | Estimates | Inputs | Mark | Source read |
+|---|---|---|---|---|
+| Ballistics, `FLY-BALLISTIC` (`range_level`, `max_range_level`, `range_to_height`, `max_height`, `velocity_for_range`) | Range and height without drag | Velocity, launch angle | V1 | Roth 1979 eqs. (1)-(3), (5); Richards & Moore eqs. [4]-[5]; Moore & Richards 2005 eqs. [7], [9], [10] |
+| Richards & Moore, `FLY-RM-FACE`, `FLY-RM-CRATER`, `FLY-RM-STEMMING` (`rm_face_burst`, `rm_cratering`, `rm_stemming_ejection`, `rm_min_confinement`) | Maximum range by face burst, cratering and stemming ejection; minimum burden or stemming | `k`, charge (kg/m), burden, stemming, hole angle | V1 | Richards & Moore, ISEE, eqs. [6], [7a]-[7c] |
+| Lundborg, `FLY-LUNDBORG-MAX`, `FLY-LUNDBORG-Q` (`lundborg_max_range`, `lundborg_optimal_fragment`, `lundborg_range`) | Maximum range and optimal fragment size; range by powder factor | Diameter (mm), powder factor | V2 | As restated by Richards & Moore, McKenzie 2018 and Szendrei & Tose 2022; originals not read |
+| McKenzie 2018, `FLY-MCKENZIE-2018` (`mckenzie_max_range`) | Maximum range | SDoB (you supply it), diameter | V1 | McKenzie 2018 summary, slide 11, version 2018 only |
+| Roth, `FLY-ROTH-GURNEY`, `FLY-ROTH-CAL` (`roth_charge_mass_ratio`, `roth_gurney_velocity`, `roth_launch_velocity`, `roth_calibrated_velocity`, `roth_reference_gurney_velocity`) | Launch velocity from c/m and the Gurney velocity; calibrated equations | Linear charge, rock density, burden, detonation velocity | V1 | Roth 1979, USBM OFR 77-81, eqs. (7)-(10), (13), (13a), (14), (17) |
+
+`flyrock.info(flyrock.Model.X)` gives the id, mark and citation of each one, and `compare` carries them in `attrs`.
+
+**Published critiques** (`attrs["critiques"]`): models without drag can overestimate the range by factors of 2 to 8; Lundborg holds for spherical fragments of the optimal size; McKenzie inherits Lundborg's calibration (Szendrei & Tose 2022, JSAIMM 122(12), pp. 726-731); a powder-factor correlation tends to underestimate the range (Roth 1979, pp. 10-11, 29-31).
+
+**Not included, and why:** McKenzie (2009) coefficient and the SDoB definition (no source read defines it, so SDoB is yours to give), McKenzie's fragment size and minimum stemming, Roth's graphical curves and bench correlation, scaling Roth's calibrated equations to other explosives (the source does not state the rule and its printed factor looks inverted), drag trajectories, the shape of the clearance zone, and a hole-table file reader (pass a DataFrame; pandas already reads CSV and Excel).
 
 ## Conventions
 
