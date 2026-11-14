@@ -129,6 +129,17 @@ def test_heelan_ppv_short_duration_warns_of_truncation():
     assert short.time_s[1] == pytest.approx(1 / (40 * 2000.0))  # the step stays automatic
 
 
+def test_heelan_ppv_warns_when_the_time_step_is_too_coarse():
+    fine = nfl.heelan_ppv(source(8000.0), ROCK, column(), 50.0, 2.5)
+    coarse = nfl.heelan_ppv(source(8000.0), ROCK, column(), 50.0, 2.5, sample_rate_hz=1024.0)
+    note = [m for m in coarse.warnings if "under-resolved" in m]
+    assert len(note) == 1 and "7.81 / gamma" in note[0]  # 8000 / 1024
+    assert coarse.ppv_mm_s < 0.99 * fine.ppv_mm_s
+    assert not any("under-resolved" in m for m in fine.warnings)
+    at_the_limit = nfl.heelan_ppv(source(8000.0), ROCK, column(), 50.0, 2.5, sample_rate_hz=80000.0)  # 1 / (10 gamma)
+    assert not any("under-resolved" in m for m in at_the_limit.warnings)
+
+
 def test_heelan_ppv_validity_warnings_carry_their_number():
     high = nfl.heelan_ppv(source(60000.0), ROCK, column(), 50.0, 2.5)
     omega = core.scaled_frequency(source(60000.0), ROCK, 0.05)
@@ -250,6 +261,97 @@ def test_charge_scaling_takes_a_nominal_tie_as_a_tie():
     assert noisy.arrivals["weight"].tolist()[:2] == pytest.approx([1.0, 1.0], rel=1e-12)
 
 
+def test_charge_scaling_orders_ties_with_the_time_tolerance():
+    # 0.1 + 0.2 is one ulp above 0.3: the same firing time, so the order of the table decides, as in the exact tie
+    kw = dict(monitor=(0.0, 500.0), weighting="charge-scaling", spacing_m=1.0)
+
+    def weights(second, third):
+        holes = table([0.0, 1.0, 2.0], [0.0, 0.0, 0.0], [5.0, 3.0, 8.0], [0.0, second, third])
+        return blast(holes, **kw).arrivals["weight"].tolist()
+
+    exact = weights(0.3, 0.3)
+    c = core.charge_scaling_weights([5.0, 3.0, 8.0], [math.inf, 1.0, 2.0], 1.0, 0.8)
+    assert exact == pytest.approx([ci / wi**0.8 for ci, wi in zip(c, (5.0, 3.0, 8.0))], rel=1e-12)
+    assert weights(0.1 + 0.2, 0.3) == exact  # a plain sort would fire the third row before the second
+    assert weights(0.3, 0.1 + 0.2) == exact
+
+
+def test_charge_scaling_warns_that_ties_depend_on_the_table_order():
+    kw = dict(monitor=(0.0, 500.0), weighting="charge-scaling", spacing_m=1.0)
+    tied = table([0.0, 1.0, 2.0, 3.0], [0.0, 0.0, 0.0, 0.0], [5.0, 3.0, 8.0, 4.0], [0.0, 0.3, 0.1 + 0.2, 0.4])
+    tied.index = ["H1", "H2", "H3", "H4"]
+    res = blast(tied, **kw)
+    w = [m for m in res.warnings if "order in the table" in m]
+    assert len(w) == 1 and "['H2', 'H3']" in w[0]
+    turned = blast(tied.iloc[::-1], **kw)  # the same blast with the rows reversed: the tied weights change
+    assert turned.arrivals["weight"]["H2"] != pytest.approx(res.arrivals["weight"]["H2"], rel=1e-3)
+    assert turned.arrivals["weight"]["H1"] == res.arrivals["weight"]["H1"]
+    apart = blast(table([0.0, 1.0, 2.0], [0.0, 0.0, 0.0], [5.0, 3.0, 8.0], [0.0, 0.3, 0.325]), **kw)
+    assert not any("order in the table" in m for m in apart.warnings)
+    assert not any("order in the table" in m for m in blast(tied, weighting="damage", spacing_m=1.0).warnings)
+
+
+def test_charge_scaling_takes_the_exponent_from_the_law():
+    holes = table([0.0, 1.0, 2.0], [0.0, 0.0, 0.0], [5.0, 3.0, 8.0], [0.0, 0.025, 0.050])
+    kw = dict(monitor=(0.0, 500.0), weighting="charge-scaling", spacing_m=1.0)
+    w = np.array([5.0, 3.0, 8.0])
+    laws = ((LAW, 0.8),  # square root, beta 1.6: A = beta / 2
+            (at.make_site_law(at.Law.CubeRoot, 1000.0, 1.5), 0.5),  # cube root: A = beta / 3
+            (at.make_site_law(at.Law.General, 1000.0, 1.6, charge_exponent=0.7), 0.7))  # general: A = a
+    for law, a in laws:
+        res = blast(holes, law=law, **kw)
+        c = np.array(core.charge_scaling_weights(w.tolist(), [math.inf, 1.0, 1.0], 1.0, a))
+        assert res.arrivals["weight"].tolist() == pytest.approx((c / w**a).tolist(), rel=1e-12)
+        assert not any("charge_exponent" in m for m in res.warnings)
+        same = blast(holes, law=law, charge_exponent=a * (1 + 1e-9), **kw)  # the law's own value: no warning
+        assert same.warnings == res.warnings and same.ppv_mm_s == pytest.approx(res.ppv_mm_s, rel=1e-8)
+    with pytest.raises(ValueError, match=DOMAIN + r" 'law'.*A = 1\.2"):  # A > 1 has no physical meaning
+        blast(holes, law=at.make_site_law(at.Law.SquareRoot, 1000.0, 2.4), **kw)
+
+
+def test_charge_scaling_warns_when_the_exponent_is_not_the_one_of_the_law():
+    # the trap: SiteLaw.charge_exponent of a square-root law is 0.5 (the exponent inside the scaled distance), not A
+    holes = table([0.0, 1.0, 2.0], [0.0, 0.0, 0.0], [5.0, 3.0, 8.0], [0.0, 0.025, 0.050])
+    kw = dict(monitor=(0.0, 500.0), weighting="charge-scaling", spacing_m=1.0)
+    assert LAW.charge_exponent == 0.5
+    res = blast(holes, charge_exponent=LAW.charge_exponent, **kw)
+    note = [m for m in res.warnings if "charge_exponent" in m]
+    assert len(note) == 1 and "charge_exponent = 0.5" in note[0] and "A = 0.8" in note[0]
+    w = np.array([5.0, 3.0, 8.0])
+    c = np.array(core.charge_scaling_weights(w.tolist(), [math.inf, 1.0, 1.0], 1.0, 0.5))
+    assert res.arrivals["weight"].tolist() == pytest.approx((c / w**0.5).tolist(), rel=1e-12)  # the given value is used
+    assert res.ppv_mm_s != pytest.approx(blast(holes, **kw).ppv_mm_s, rel=1e-3)
+
+
+def test_arguments_the_weighting_does_not_use_are_reported():
+    holes = table([0.0, 5.0], [0.0, 0.0], [50.0, 50.0], [0.0, 0.025])
+    for kw, name in ((dict(spacing_m=5.0), "spacing_m"), (dict(eta=0.3), "eta"),
+                     (dict(charge_exponent=0.8), "charge_exponent"),
+                     (dict(weighting="damage", spacing_m=5.0, charge_exponent=0.8), "charge_exponent"),
+                     (dict(weighting="charge-scaling", spacing_m=5.0, eta=0.3), "eta")):
+        note = [m for m in blast(holes, **kw).warnings if "ignored" in m]
+        assert len(note) == 1 and note[0].startswith(name + " is ignored")
+    both = [m for m in blast(holes, spacing_m=5.0, eta=0.3).warnings if "ignored" in m]
+    assert len(both) == 1 and both[0].startswith("spacing_m and eta are ignored")
+    for kw in (dict(), dict(screening=True, spacing_m=5.0), dict(weighting="damage", spacing_m=5.0, eta=0.3)):
+        assert not any("ignored" in m for m in blast(holes, **kw).warnings)
+
+
+def test_firing_times_that_look_like_milliseconds_warn():
+    typed_in_ms = table([0.0, 5.0, 10.0], [0.0, 0.0, 0.0], [50.0, 50.0, 50.0], [0.0, 17.0, 34.0])
+    res = blast(typed_in_ms)
+    note = [m for m in res.warnings if "milliseconds" in m]
+    assert len(note) == 1 and "34 s" in note[0] and "must be in seconds" in note[0]
+    in_seconds = table([0.0, 5.0, 10.0], [0.0, 0.0, 0.0], [50.0, 50.0, 50.0], [0.0, 0.017, 0.034])
+    assert blast(in_seconds).warnings == ()
+    assert res.ppv_mm_s != pytest.approx(blast(in_seconds).ppv_mm_s, rel=1e-2)  # the holes no longer overlap
+    at_the_limit = table([0.0, 5.0, 10.0], [0.0, 0.0, 0.0], [50.0, 50.0, 50.0], [-10.0, 0.0, 10.0])  # 20 s
+    assert blast(at_the_limit).warnings == ()
+    mc = nfl.monte_carlo_blast(typed_in_ms, (100.0, 0.0), seed_wave(), sample_rate_hz=FS, law=LAW,
+                               wave_velocity_m_s=2500.0, delay_sigma_s=0.001, simulations=2)
+    assert sum("milliseconds" in m for m in mc.warnings) == 1
+
+
 def test_screening_with_the_linear_weighting():
     # the hole nearer to the monitor fires first and screens the one behind it
     holes = table([0.0, 5.0], [0.0, 0.0], [50.0, 50.0], [0.025, 0.0])
@@ -276,9 +378,9 @@ def test_simulate_blast_required_arguments():
     with pytest.raises(ValueError, match=DOMAIN + " 'spacing_m'"):
         blast(holes, screening=True)
     with pytest.raises(ValueError, match=DOMAIN + " 'charge_exponent'"):
-        blast(holes, weighting="charge-scaling", spacing_m=5.0)
-    with pytest.raises(ValueError, match=DOMAIN + " 'charge_exponent'"):
         blast(holes, weighting="charge-scaling", spacing_m=5.0, charge_exponent=1.2)  # A > 1: no physical meaning
+    with pytest.raises(ValueError, match=DOMAIN + " 'charge_exponent'"):
+        blast(holes, weighting="charge-scaling", spacing_m=5.0, charge_exponent="0.8")
     with pytest.raises(ValueError, match=DOMAIN + " 'weighting'"):
         blast(holes, weighting="nonlinear")
     with pytest.raises(ValueError, match=DOMAIN + " 'wave_velocity_m_s'"):
@@ -287,8 +389,12 @@ def test_simulate_blast_required_arguments():
         blast(holes, monitor=(math.nan, 0.0))
     with pytest.raises(ValueError, match=DOMAIN + " 'monitor'.*row"):
         blast(holes, monitor=(5.0, 0.0))  # on a hole
-    with pytest.raises(ValueError, match=DOMAIN + " 'holes'.*same point"):
-        blast(table([0.0, 0.0], [0.0, 0.0], [50.0, 50.0], [0.0, 0.025]), weighting="damage", spacing_m=5.0)
+    twice = table([0.0, 0.0], [0.0, 0.0], [50.0, 50.0], [0.0, 0.025])
+    twice.index = ["H1", "H2"]
+    for kw in (dict(weighting="damage"), dict(weighting="charge-scaling"), dict(screening=True)):
+        with pytest.raises(ValueError, match=DOMAIN + r" 'holes'.*\['H1', 'H2'\].*same point"):
+            blast(twice, spacing_m=5.0, **kw)
+    assert blast(twice).ppv_mm_s > 0  # two decks of one hole: fine with the plain linear sum
 
 
 def test_simulate_blast_table_errors_name_column_and_row():
@@ -325,9 +431,16 @@ def test_simulate_blast_repeats_the_warnings_of_the_prediction():
     fitted = at.fit(datasets.synthetic_events(seed=3))  # distances from 50 m to 2000 m
     holes = table([0.0, 5.0], [0.0, 0.0], [50.0, 50.0], [0.0, 0.025])
     res = blast(holes, monitor=(20.0, 0.0), law=fitted)
-    assert len(res.warnings) == 2 and all("extrapolation" in w for w in res.warnings)
-    assert "(rows [0])" in res.warnings[0] and "(rows [1])" in res.warnings[1]
+    assert len(res.warnings) == 1  # one per cause, not one per hole
+    assert res.warnings[0].startswith("distance is outside the fitted range [")
+    assert res.warnings[0].endswith("m: extrapolation (rows [0, 1])")
     assert res.ppv_mm_s > 0
+    both = blast(table([0.0, 5.0, 60.0], [0.0, 0.0, 0.0], [50.0, 1.0, 1.0], [0.0, 0.025, 0.05]), monitor=(-50.0, 0.0),
+                 law=fitted)  # only the first hole is too near; the second and the third are too light
+    assert len(both.warnings) == 2 and both.warnings[0].startswith("distance is outside the fitted range [")
+    assert fitted.distance_min_m > 50.0 and both.warnings[0].endswith("m: extrapolation (rows [0])")
+    assert both.warnings[1].startswith("charge is outside the fitted range [")
+    assert both.warnings[1].endswith("kg: extrapolation (rows [1, 2])")
 
 
 # --- Seed -------------------------------------------------------------------------------------------------------------
@@ -347,6 +460,19 @@ def test_seed_from_a_record_equals_the_same_seed_as_an_array():
         nfl.simulate_blast(holes, (100.0, 0.0), (record, "vertical"), sample_rate_hz=2048.0, **kw)
     with pytest.raises(ValueError, match=DOMAIN + " 'seed'.*'mic'"):
         nfl.simulate_blast(holes, (100.0, 0.0), (record, "mic"), **kw)
+
+
+def test_seed_as_a_list_and_the_mic_channel():
+    record = datasets.synthetic_record(seed=1, sample_rate_hz=1024.0, duration_s=0.5, pretrigger_s=0.0)
+    holes = table([0.0, 5.0], [0.0, 0.0], [50.0, 60.0], [0.0, 0.017])
+    kw = dict(law=LAW, wave_velocity_m_s=2500.0)
+    as_tuple = nfl.simulate_blast(holes, (100.0, 0.0), (record, "vertical"), **kw)
+    as_list = nfl.simulate_blast(holes, (100.0, 0.0), [record, "vertical"], **kw)
+    assert as_list.velocity_mm_s.tolist() == as_tuple.velocity_mm_s.tolist() and as_tuple.warnings == ()
+    mic = nfl.simulate_blast(holes, (100.0, 0.0), (record, "mic"), **kw)
+    assert len(mic.warnings) == 1 and "'mic'" in mic.warnings[0] and "pressure" in mic.warnings[0]
+    sweep = nfl.delay_sweep([record, "mic"], delays_s=[0.0, 0.004])
+    assert len(sweep.attrs["warnings"]) == 1 and "pressure" in sweep.attrs["warnings"][0]
 
 
 def test_seed_is_normalized_to_unit_peak():
@@ -460,6 +586,14 @@ def test_delay_sweep():
     half = nfl.delay_sweep(seed_wave(), sample_rate_hz=FS, delays_s=[0.0, 0.2], amplitude_ratio=0.5)
     assert half["peak"].tolist() == pytest.approx([1.5, 1.0])
     assert half["ratio_to_simultaneous"].tolist() == pytest.approx([1.0, 1 / 1.5])
+
+
+def test_delay_sweep_warns_when_delays_look_like_milliseconds():
+    out = nfl.delay_sweep(seed_wave(), sample_rate_hz=FS, delays_s=[0.0, 5.0, 13.0])  # 5 and 13 ms typed as s
+    note = out.attrs["warnings"]
+    assert len(note) == 1 and "milliseconds" in note[0] and "13 s" in note[0] and "must be in seconds" in note[0]
+    assert out["ratio_to_simultaneous"].tolist() == pytest.approx([1.0, 0.5, 0.5])
+    assert nfl.delay_sweep(seed_wave(), sample_rate_hz=FS, delays_s=[0.0, 0.005, 1.0]).attrs["warnings"] == ()
 
 
 def test_delay_sweep_from_a_record_and_domain():

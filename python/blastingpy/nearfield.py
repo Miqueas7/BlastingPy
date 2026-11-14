@@ -22,16 +22,21 @@ Models (the core functions are re-exported with their names) and how far each on
   static E is inferred.
 * Heelan. :func:`heelan_element` is the radiation of a short cylindrical charge (Heelan 1953, eqs. 12-13) with the
   explicit pressure function of Blair (2007, eqs. 8 and 13-16) [V1]. :func:`heelan_column` adds the elements of a
-  column initiated at the detonation velocity, each with its non-linear weight (Blair 2008, eqs. 1-3 and 22) [V1];
-  the initiation time of each element is inferred from the description. :func:`heelan_ppv` returns the peak of that
-  waveform with the validity limits of Blair (2007) as warnings. It is not a far-field solution in the strict sense.
+  column initiated at the detonation velocity, each with its non-linear weight (Blair 2008, eqs. 1-3 and 22) [V1].
+  Inferred, not read in the source: the initiation time of each element (the paper describes it without a formula)
+  and mirroring the weights when the primer is above mid-column (the paper only treats a primer nearer the bottom).
+  :func:`heelan_ppv` returns the peak of that waveform with the validity limits of Blair (2007) as warnings. It is
+  not a far-field solution in the strict sense.
 * Whole blast. :func:`simulate_blast` superposes one seed waveform per hole (Hinzen 1988, eqs. 3-7; Blair 1999,
   eq. 1a) [V1], with the amplitude of each hole taken from the site law of :mod:`blastingpy.attenuation` and,
   optionally, the screening of Blair (1999, eqs. 10b-10c) [V1] or the non-linear weights of Blair (2008): charge
-  scaling (eqs. 7-12) or damage (eqs. 16-21) [V1]. :func:`monte_carlo_blast` scatters delays and amplitudes (Blair
-  1999, eqs. 1b, 7 and 9) [V1] and :func:`delay_sweep` is the systematic variation of the delay between two holes
-  of Hinzen (1988). The 8 ms window of ``max_charge_8ms_kg`` is Duvall et al. (1963) as reported by Blair (1999,
-  p. 337) [V2].
+  scaling (eqs. 7-12) or damage (eqs. 16-21) [V1]. Inferred, not read in the sources: holes fired at the same time
+  do not count as already fired for each other; the screening rectangle of Blair (1999) is centred on the line from
+  the hole to the monitor; holes and monitor are at the same level; g is in m^2; an arrival between two samples is
+  spread linearly over them. :func:`monte_carlo_blast` scatters delays and amplitudes (Blair 1999, eqs. 1b and 7)
+  [V1]; the normal delay scatter is a design choice. :func:`delay_sweep` is the systematic variation of the delay
+  between two holes of Hinzen (1988). The 8 ms window of ``max_charge_8ms_kg`` is Duvall et al. (1963) as reported
+  by Blair (1999, p. 337) [V2].
 
 Not included (not verified, or out of scope), and the paper that would unlock it
 ---------------------------------------------------------------------------------
@@ -49,6 +54,11 @@ Not included (not verified, or out of scope), and the paper that would unlock it
 * Holmberg & Persson's own papers (1979, Tunnelling '79, pp. 270-283) and Persson, Holmberg & Lee (1994, p. 247):
   with them the integral, the surface constants and the critical PPV would be [V1]. Their 700-1000 mm/s damage limit
   is for Swedish igneous rocks (as reported by NIOSH) and is not offered as a general criterion.
+* The objection of Blair & Minchinton to Holmberg-Persson in their own words (1996, Fragblast-5, pp. 121-130; 1997,
+  Fragblast 1(1): 59-72): it is known here only as summarized by Onederra & Esen (2004) and Blair (2007, 2008).
+* The PPV at the end of the crushing zone (Onederra & Esen 2004, eq. 5), with the equilibrium pressure of Liu &
+  Katsabanis (1993) and the crushing radius of Esen et al. (2003): an exponent could not be verified and they need
+  non-ideal detonation pressures, which the library does not compute.
 * Heelan's energy partition and his SV/P ratio of 1.6: the printed formulas are inconsistent.
 """
 
@@ -62,7 +72,7 @@ import pandas as pd
 
 from . import airblast
 from ._blastingpy_core import _nearfield as _nf
-from .attenuation import Level, SiteLaw, predict_ppv
+from .attenuation import Law, Level, SiteLaw, predict_ppv
 from .io import Record
 
 HpModel = _nf.HpModel
@@ -121,6 +131,13 @@ WEIGHTINGS = ("linear", "charge-scaling", "damage")
 _HP_MODELS = {"original": _nf.hp_original, "niosh": _nf.hp_niosh}
 _MAX_SAMPLES = 2_000_000  # tope de muestras de una onda: evita reservar vectores enormes por un dato mal puesto
 _MAX_SIGMA_S = 1.0
+# Umbrales de plausibilidad (avisos, no errores). Son elecciones de diseño, no valores de una fuente: una voladura
+# dura segundos y un retardo entre pozos, milisegundos; por encima de esto lo más probable es que estén en ms.
+_FIRING_SPAN_S = 20.0
+_LONG_DELAY_S = 1.0
+_STEPS_PER_PULSE = 10.0  # heelan_ppv avisa si el paso pasa de 1/(10 gamma): elección de diseño (el automático es 1/40)
+_ETA = 0.2  # primera estimación de eta de Blair (2008); el valor por omisión de simulate_blast
+_OUTSIDE = " is outside the fitted range"  # texto del aviso de extrapolación del núcleo (attenuation.hpp)
 _G = 23337.0  # g de Blair (1999), Fig. 7c; el valor por omisión del núcleo
 _LINEAR_SUM = ("the P and SV pulses are added linearly where they overlap in time; Blair (2007, p. E37) questions that "
                "sum: the Heelan model only makes sense where the two waves do not overlap")
@@ -212,14 +229,17 @@ def heelan_ppv(source, medium, column, r: float, z: float, *, sample_rate_hz: fl
 
     Time starts when the primer initiates. Without ``sample_rate_hz`` the step is ``1 / (40 gamma)``; without
     ``duration_s`` the record lasts until the last arrival (initiation of the element at the detonation velocity plus
-    its S travel time) plus ``40 / gamma``. A grid of more than 2 000 000 samples is an error.
+    its S travel time) plus ``40 / gamma``. A grid of more than 2 000 000 samples is an error. The pulse lasts a few
+    ``1 / gamma``, so the sample rate of a seismograph is usually far too low here: leave ``sample_rate_hz`` out
+    unless you need a particular grid.
 
     ``warnings`` always says that the P and SV pulses are added linearly where they overlap, and adds, with the
     computed number, each limit of Blair (2007, pp. E37-E40) that is not met: ``Omega_A > 0.1`` (Heelan overestimates
     the exact solution), ``Omega_A r / a < pi`` (near field) and element half-length / radius > 2; that the non-linear
-    column weights have no experimental validation when ``column.charge_exponent < 1``; and that the peak may be
-    truncated when ``duration_s`` ends before the last arrival plus ``10 / gamma``. Nothing is refused on those
-    grounds: the result is yours to judge.
+    column weights have no experimental validation when ``column.charge_exponent < 1``; that the peak may be
+    truncated when ``duration_s`` ends before the last arrival plus ``10 / gamma``; and that it may be under-resolved
+    when the time step is longer than ``1 / (10 gamma)``. Nothing is refused on those grounds: the result is yours to
+    judge.
     """
     _nf.heelan_column(source, medium, column, r, z, [])  # sin instantes: solo valida (fuente, medio, columna y r > 0)
     gamma, a = source.gamma_per_s, column.hole_radius_m
@@ -259,15 +279,23 @@ def heelan_ppv(source, medium, column, r: float, z: float, *, sample_rate_hz: fl
     if duration_s is not None and duration < last + 10.0 / gamma:
         notes.append(f"duration_s = {duration:g} s ends before the last arrival plus 10 / gamma "
                      f"({last + 10.0 / gamma:.4g} s): the peak may be truncated")
+    if fs < _STEPS_PER_PULSE * gamma:  # paso mayor que 1/(10 gamma)
+        notes.append(f"time step = {gamma / fs:.3g} / gamma is longer than 1 / ({_STEPS_PER_PULSE:g} gamma): the "
+                     "pulse is under-resolved and the peak may be cut short; leave sample_rate_hz out for the "
+                     "automatic step, 1 / (40 gamma)")
     return HeelanResult(_nf.vector_peak(wave), time, np.asarray(wave.radial_mm_s), np.asarray(wave.axial_mm_s),
                         omega, tuple(notes))
 
 
 # --- Whole blast: seed superposition from the hole table --------------------------------------------------------------
 
-def _seed(seed, sample_rate_hz) -> tuple[list[float], float]:
-    """The seed normalized to unit peak (Blair 1999) and its sample rate, from an array or a (Record, channel) pair."""
-    if isinstance(seed, tuple) and len(seed) == 2 and isinstance(seed[0], Record):
+def _seed(seed, sample_rate_hz) -> tuple[list[float], float, list[str]]:
+    """The seed normalized to unit peak (Blair 1999), its sample rate and the warnings about it.
+
+    ``seed`` is an array or a (Record, channel name) pair (a tuple or a list).
+    """
+    notes = []
+    if isinstance(seed, (tuple, list)) and len(seed) == 2 and isinstance(seed[0], Record):
         record, name = seed
         if not isinstance(name, str) or name not in record.channels:
             raise _error("seed", f"names the channel {name!r}, which is not in the record. "
@@ -277,6 +305,8 @@ def _seed(seed, sample_rate_hz) -> tuple[list[float], float]:
             raise _error("sample_rate_hz", f"disagrees with the sample rate of the record ({fs:g} Hz); leave it out. "
                                            f"Received: {sample_rate_hz!r}")
         values = record.channels[name]
+        if name == "mic":
+            notes.append("the seed is the 'mic' channel of the record: that is air pressure (Pa), not ground vibration")
     else:
         if sample_rate_hz is None:
             raise _error("sample_rate_hz", "is required when the seed is an array: the sample rate is never guessed")
@@ -290,7 +320,13 @@ def _seed(seed, sample_rate_hz) -> tuple[list[float], float]:
     peak = float(np.abs(s).max())
     if peak == 0.0:
         raise _error("seed", "is zero everywhere: it cannot be normalized to unit peak")
-    return (s / peak).tolist(), fs
+    return (s / peak).tolist(), fs, notes
+
+
+def _law_charge_exponent(law: SiteLaw) -> float:
+    """A of ``v = K W^A d^-B``. ``SiteLaw.charge_exponent`` is A only for a general law: for the scaled-distance laws
+    it is the exponent of W inside the scaled distance (1/2 or 1/3), so A = beta times it (Blair 2008, eqs. 14-15)."""
+    return law.charge_exponent if law.law == Law.General else law.beta * law.charge_exponent
 
 
 def _vibration_law(law) -> SiteLaw:
@@ -325,7 +361,7 @@ def _check_span(name: str, last_s: float, fs: float, seed_samples: int, hint: st
 
 
 def _prepare(holes, monitor, seed, sample_rate_hz, law, wave_velocity_m_s, *, weighting="linear", spacing_m=None,
-             charge_exponent=None, eta=0.2, screening=False):
+             charge_exponent=None, eta=_ETA, screening=False):
     """Validated inputs of a blast: (seed, fs, arrivals table, firing times, charges, warnings)."""
     if not isinstance(holes, pd.DataFrame):
         raise _error("holes", "must be a pandas DataFrame")
@@ -343,7 +379,7 @@ def _prepare(holes, monitor, seed, sample_rate_hz, law, wave_velocity_m_s, *, we
     if not (_number(mx) and _number(my)):
         raise _error("monitor", f"must be an (x, y) pair of finite numbers, in m. Received: {monitor!r}")
     mx, my = float(mx), float(my)
-    samples, fs = _seed(seed, sample_rate_hz)
+    samples, fs, notes = _seed(seed, sample_rate_hz)
     law = _vibration_law(law)
     velocity = _positive("wave_velocity_m_s", wave_velocity_m_s)
     if not isinstance(weighting, str) or weighting not in WEIGHTINGS:
@@ -356,6 +392,21 @@ def _prepare(holes, monitor, seed, sample_rate_hz, law, wave_velocity_m_s, *, we
                                   f"model. Received: screening=True with weighting={weighting!r}")
     if weighting != "linear" or screening:
         spacing = _positive("spacing_m", spacing_m, "is required (the mean spacing between holes, m) and ")
+        if holes.duplicated(["x_m", "y_m"]).any():  # el núcleo lo rechaza igual, pero nombra posiciones, no filas
+            raise _error("holes", f"rows {list(holes.index[holes.duplicated(['x_m', 'y_m'], keep=False)])} are at the "
+                                  "same point: screening and the non-linear weightings need the distance between "
+                                  "holes to be > 0")
+    ignored = [name for name, given, used in (
+        ("spacing_m", spacing_m is not None, weighting != "linear" or screening),
+        ("eta", eta != _ETA, weighting == "damage"),
+        ("charge_exponent", charge_exponent is not None, weighting == "charge-scaling")) if given and not used]
+    if ignored:
+        one = len(ignored) == 1
+        notes.append(f"{' and '.join(ignored)} {'is' if one else 'are'} ignored: weighting={weighting!r}"
+                     f"{' without screening' if weighting == 'linear' else ''} does not use {'it' if one else 'them'}")
+    span = float(t.max() - t.min())
+    if span > _FIRING_SPAN_S:
+        notes.append(f"firing times look like milliseconds: firing_time_s spans {span:g} s and it must be in seconds")
 
     d = np.hypot(x - mx, y - my)
     if (d == 0.0).any():
@@ -372,28 +423,47 @@ def _prepare(holes, monitor, seed, sample_rate_hz, law, wave_velocity_m_s, *, we
         prediction = predict_ppv(law, d[i], w[i], Level.Median)
         median[i] = prediction.value
         for message in prediction.warnings:
-            from_law.setdefault(message, []).append(label)
-    notes = [f"{message} (rows {rows})" for message, rows in from_law.items()]
+            # una nota por causa y no por pozo: se quita el valor del pozo («distance 20 m is…» → «distance is…»)
+            head, outside, tail = message.partition(_OUTSIDE)
+            cause = head.rsplit(" ", 2)[0] + outside + tail if outside else message
+            from_law.setdefault(cause, []).append(label)
+    notes += [f"{cause} (rows {rows})" for cause, rows in from_law.items()]
 
     weight, counts = np.ones(len(holes)), None
-    if weighting != "linear" and holes.duplicated(["x_m", "y_m"]).any():
-        raise _error("holes", f"rows {list(holes.index[holes.duplicated(['x_m', 'y_m'], keep=False)])} are at the same "
-                              f"point: weighting={weighting!r} needs the distance between holes to be > 0")
     if weighting == "charge-scaling":
-        if not _number(charge_exponent):
-            raise _error("charge_exponent", f"is required with weighting='charge-scaling' (the charge exponent A of "
-                                            f"the site law; b / 2 for a square-root law). "
+        own = _law_charge_exponent(law)
+        if charge_exponent is None:
+            if not 0.0 < own <= 1.0:
+                raise _error("law", f"has the charge exponent A = {own:g}, outside (0, 1]: weighting='charge-scaling' "
+                                    "is not defined for it (A > 1 has no physical meaning, Blair 2008, p. 240)")
+            exponent = own
+        elif not _number(charge_exponent):
+            raise _error("charge_exponent", f"must be a number within (0, 1], or None to take it from the law. "
                                             f"Received: {charge_exponent!r}")
-        # distancia al pozo ya iniciado más cercano; los de igual tiempo (tolerancia del núcleo) no cuentan entre sí
-        nearest = np.full(len(holes), math.inf)
-        for i in range(len(holes)):
-            fired = t < t[i] - _nf._time_tolerance_s
+        else:
+            exponent = float(charge_exponent)
+            if not math.isclose(exponent, own, rel_tol=1e-6):
+                notes.append(f"charge_exponent = {exponent:g} is not the charge exponent of the law, A = {own:g} (for "
+                             "a square-root or cube-root law, beta times SiteLaw.charge_exponent): the given value is "
+                             "used, but the weight C_n / w_n^A is eq. 12 of Blair (2008) only with the law's own A")
+        # «Ya inició» con la tolerancia de tiempos del núcleo: los pozos a menos de 1 ns son simultáneos, no cuentan
+        # entre sí para el pozo ya iniciado más cercano y conservan el orden de la tabla (orden estable sobre los
+        # tiempos redondeados a la tolerancia).
+        tolerance = _nf._time_tolerance_s
+        nearest, tied = np.full(len(holes), math.inf), []
+        for i, label in enumerate(holes.index):
+            fired = t < t[i] - tolerance
             if fired.any():
                 nearest[i] = np.hypot(x[fired] - x[i], y[fired] - y[i]).min()
-        order = np.argsort(t, kind="stable")
+            if (np.abs(t - t[i]) <= tolerance).sum() > 1:
+                tied.append(label)
+        order = np.argsort(np.round(t / tolerance), kind="stable")
         c = np.empty(len(holes))
-        c[order] = _nf.charge_scaling_weights(w[order].tolist(), nearest[order].tolist(), spacing, charge_exponent)
-        weight = c / w ** charge_exponent  # la amplitud de la ley ya trae w^A: la ec. 12 lo cambia por C_n
+        c[order] = _nf.charge_scaling_weights(w[order].tolist(), nearest[order].tolist(), spacing, exponent)
+        weight = c / w ** exponent  # la amplitud de la ley ya trae w^A: la ec. 12 lo cambia por C_n
+        if tied:
+            notes.append(f"holes fired at the same time (rows {tied}): with weighting='charge-scaling' the weights of "
+                         "tied holes depend on their order in the table; Blair (2008) does not say how to order them")
         notes += [_CHARGE_SCALING, _FULL_BLAST_LIMITS]
     elif weighting == "damage":
         weight = np.asarray(_nf.damage_weights(x.tolist(), y.tolist(), w.tolist(), t.tolist(), mx, my, spacing, eta))
@@ -437,6 +507,10 @@ def simulate_blast(holes: pd.DataFrame, monitor: tuple[float, float], seed, *, s
     ``holes`` has one row per hole with the columns :data:`BLAST_COLUMNS` (plan-view coordinates in m, charge in kg,
     firing time in s) and ``monitor`` is the (x, y) of the monitoring point.
 
+    Units: ``x_m``, ``y_m``, ``monitor`` and ``spacing_m`` in m; ``charge_kg`` in kg; ``firing_time_s`` in s, not ms;
+    ``wave_velocity_m_s`` in m/s; ``sample_rate_hz`` in Hz. Inspect ``arrivals`` before trusting the peak: it shows
+    the distance, arrival time, amplitude and weight each hole ended up with, and a unit mistake shows there.
+
     ``seed`` is the waveform of a single hole: a 1-D array (then ``sample_rate_hz`` is required) or a pair
     ``(record, channel_name)`` with a :class:`blastingpy.io.Record`, whose sample rate is used. It should be the record
     of a single-hole shot in one component, and the simulation is of that component only. It is normalized to unit
@@ -452,11 +526,18 @@ def simulate_blast(holes: pd.DataFrame, monitor: tuple[float, float], seed, *, s
     * ``"linear"`` (Hinzen 1988; Blair 1999, eq. 1a): weight 1. With ``screening=True`` the weight is the screening
       factor of Blair (1999, eq. 10c), ``1 / (1 + g d^-2 sqrt(N_S))`` with a floor of 0.2, where N_S counts the holes
       fired earlier inside the rectangle of width ``spacing_m`` between the hole and the monitor.
-    * ``"charge-scaling"`` (Blair 2008, eq. 12): weight ``C_n / w_n**A`` with C_n of eq. 10 and ``A = charge_exponent``
-      (required, within (0, 1]). Eq. 12 replaces ``w_n**A`` by C_n and the amplitude of the law already contains
-      ``w_n**A``; for a square-root law ``v = K (d / sqrt(W))**-b``, ``A = b / 2`` (eqs. 14-15). Holes are taken in
-      firing order (ties in table order) and holes fired at the same time do not count as already fired for each
-      other. Requires ``spacing_m``. Its own author does not recommend it over the damage model.
+    * ``"charge-scaling"`` (Blair 2008, eq. 12): weight ``C_n / w_n**A`` with C_n of eq. 10. Eq. 12 replaces
+      ``w_n**A`` by C_n, and the amplitude of the law already contains ``w_n**A``, so A has to be the law's own charge
+      exponent in ``v = K W**A d**-B``. With ``charge_exponent=None`` (the default) it is taken from the law:
+      ``beta / 2`` for a square-root law and ``beta / 3`` for a cube-root law (eqs. 14-15), and the fitted exponent
+      of the charge for a general law. Mind the name: ``SiteLaw.charge_exponent`` is that A only for a general law;
+      for the other two it is the 1/2 or 1/3 inside the scaled distance, so do not pass it here. An explicit
+      ``charge_exponent`` that differs from the law's is used, with a warning that gives both. A must be within
+      (0, 1]. P = 4 (how sharp the transition of eq. 8 is) and D = 1 (eq. 7) are fixed design choices: the paper asks
+      only for a positive integer P and takes D = 1. Holes are taken in firing order; holes fired within 1e-9 s of
+      each other are simultaneous: they do not count as already fired for each other and keep the order of the
+      table, on which their weights then depend (a warning lists them). Requires ``spacing_m``. Its own author does
+      not recommend it over the damage model.
     * ``"damage"`` (Blair 2008, eq. 21): weight ``S_n / D_n``, the accumulated damage of the holes fired earlier and
       their screening. Requires ``spacing_m``; ``eta`` is the damage constant (0.2 and 0.3 are the author's estimates).
       With ``eta=0`` and no hole in the way it equals ``"linear"``.
@@ -467,7 +548,9 @@ def simulate_blast(holes: pd.DataFrame, monitor: tuple[float, float], seed, *, s
     ``max_charge_8ms_kg`` is the largest charge fired within any 8 ms window (by firing times, not arrivals). The
     8 ms come from Duvall et al. (1963) as reported by Blair (1999, p. 337), who adds that there is nothing special
     about 8 ms: whether two holes separate depends on the seed. ``warnings`` repeats those of the law's predictions
-    (extrapolation, with the rows) and the caveats of the model chosen.
+    (extrapolation: one per cause, with the rows) and the caveats of the model chosen, and says when an input looks
+    wrong: firing times that span more than 20 s (they look like milliseconds), an argument that the chosen
+    weighting does not use (``spacing_m``, ``eta``, ``charge_exponent``) and a seed taken from the ``"mic"`` channel.
     """
     samples, fs, table, firing, charges, notes = _prepare(
         holes, monitor, seed, sample_rate_hz, law, wave_velocity_m_s, weighting=weighting, spacing_m=spacing_m,
@@ -505,10 +588,11 @@ def monte_carlo_blast(holes: pd.DataFrame, monitor: tuple[float, float], seed, *
                       simulations: int = 1000, rng_seed: int = 0, **weights) -> MonteCarloResult:
     """Monte Carlo of :func:`simulate_blast` over the delay scatter and the scatter of the site law (Blair 1999).
 
-    The blast is set up exactly as in :func:`simulate_blast` (same arguments; ``**weights`` takes ``weighting``,
-    ``spacing_m``, ``charge_exponent``, ``eta`` and ``screening``). Each simulation then draws, for every hole, an
-    arrival ``d_j + delay_sigma_s * z`` and an amplitude ``w_j (1 + amplitude_cv * z')`` with z and z' standard normal
-    (eqs. 9 and 7), and keeps the peak of the waveform.
+    The blast is set up exactly as in :func:`simulate_blast` (same arguments and units: m, kg, s, m/s and Hz;
+    ``**weights`` takes ``weighting``, ``spacing_m``, ``charge_exponent``, ``eta`` and ``screening``). Run
+    :func:`simulate_blast` with the same inputs first and inspect its ``arrivals``. Each simulation then draws, for
+    every hole, an arrival ``d_j + delay_sigma_s * z`` and an amplitude ``w_j (1 + amplitude_cv * z')`` with z and z'
+    standard normal (the amplitude is eq. 7), and keeps the peak of the waveform.
 
     * ``delay_sigma_s`` (s): one number for every hole, an array with one value per hole, or the name of a column of
       ``holes``. It is yours to give: the source publishes no delay distribution, and the normal one is a design
@@ -557,13 +641,21 @@ def delay_sweep(seed, *, sample_rate_hz: float | None = None, delays_s, amplitud
     the peak of one seed) and ``ratio_to_simultaneous`` (``peak`` over the peak with both fired together,
     ``1 + amplitude_ratio``): 1 at delay 0, and ``max(1, amplitude_ratio) / (1 + amplitude_ratio)`` once the delay
     exceeds the length of the seed. The best delay belongs to that seed, that is, to its site and distance.
+
+    ``attrs["warnings"]`` is a tuple, empty unless an input looks wrong: a delay above 1 s (it looks like
+    milliseconds) or a seed taken from the ``"mic"`` channel.
     """
-    samples, fs = _seed(seed, sample_rate_hz)
+    samples, fs, notes = _seed(seed, sample_rate_hz)
     ratio = _positive("amplitude_ratio", amplitude_ratio)
     delays = _axis("delays_s", delays_s)
     if not (np.isfinite(delays) & (delays >= 0)).all():
         raise _error("delays_s", f"must be finite and >= 0. Received: {delays_s!r}")
     if delays.size:
         _check_span("delays_s", float(delays.max()), fs, len(samples), "check that the delays are in seconds")
+        if delays.max() > _LONG_DELAY_S:
+            notes.append(f"delays look like milliseconds: the longest delay is {delays.max():g} s and delays_s must "
+                         "be in seconds")
     peaks = [float(np.abs(_nf.superpose(samples, fs, [0.0, delay], [1.0, ratio])).max()) for delay in delays.tolist()]
-    return pd.DataFrame({"delay_s": delays, "peak": peaks, "ratio_to_simultaneous": np.array(peaks) / (1.0 + ratio)})
+    out = pd.DataFrame({"delay_s": delays, "peak": peaks, "ratio_to_simultaneous": np.array(peaks) / (1.0 + ratio)})
+    out.attrs["warnings"] = tuple(notes)
+    return out
