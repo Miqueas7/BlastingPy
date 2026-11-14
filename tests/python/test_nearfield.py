@@ -241,6 +241,15 @@ def test_charge_scaling_ignores_holes_fired_at_the_same_time():
     assert res.arrivals["weight"].tolist() == pytest.approx([ci / 5**0.7 for ci in c], rel=1e-12)
 
 
+def test_charge_scaling_takes_a_nominal_tie_as_a_tie():
+    # 0.1 + 0.2 = 0.30000000000000004 and 0.3 are the same firing time (core time tolerance, 1e-9 s)
+    kw = dict(monitor=(0.0, 500.0), weighting="charge-scaling", spacing_m=1.0, charge_exponent=0.7)
+    noisy = blast(table([0.0, 1.0, 2.0], [0.0, 0.0, 0.0], [5.0, 5.0, 5.0], [0.1 + 0.2, 0.3, 0.325]), **kw)
+    exact = blast(table([0.0, 1.0, 2.0], [0.0, 0.0, 0.0], [5.0, 5.0, 5.0], [0.3, 0.3, 0.325]), **kw)
+    assert noisy.arrivals["weight"].tolist() == pytest.approx(exact.arrivals["weight"].tolist(), rel=1e-12)
+    assert noisy.arrivals["weight"].tolist()[:2] == pytest.approx([1.0, 1.0], rel=1e-12)
+
+
 def test_screening_with_the_linear_weighting():
     # the hole nearer to the monitor fires first and screens the one behind it
     holes = table([0.0, 5.0], [0.0, 0.0], [50.0, 50.0], [0.025, 0.0])

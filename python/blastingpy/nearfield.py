@@ -384,10 +384,10 @@ def _prepare(holes, monitor, seed, sample_rate_hz, law, wave_velocity_m_s, *, we
             raise _error("charge_exponent", f"is required with weighting='charge-scaling' (the charge exponent A of "
                                             f"the site law; b / 2 for a square-root law). "
                                             f"Received: {charge_exponent!r}")
-        # distancia al pozo ya iniciado más cercano; los de igual tiempo no cuentan entre sí
+        # distancia al pozo ya iniciado más cercano; los de igual tiempo (tolerancia del núcleo) no cuentan entre sí
         nearest = np.full(len(holes), math.inf)
         for i in range(len(holes)):
-            fired = t < t[i]
+            fired = t < t[i] - _nf._time_tolerance_s
             if fired.any():
                 nearest[i] = np.hypot(x[fired] - x[i], y[fired] - y[i]).min()
         order = np.argsort(t, kind="stable")

@@ -33,8 +33,8 @@
  *   (radial, axial) (Heelan ecs. 13a–13b, p. 691) [V1]; φ = arccos(−z/R), ángulo con el eje −z (Heelan p. 690 y Fig. 1,
  *   p. 687) [V1]. a es el radio del taladro (convención de Blair 2007); Heelan (p. 695) lo define como el radio de la
  *   cavidad equivalente.
- * - Validez (Blair 2007, pp. E37–E40) [V1], no se impone: Ω_A ≲ 0,1; P y SV se desacoplan con Ω_A·r/a ≳ 5; L/a ≲ 2.
- *   La suma de P y SV donde se solapan en el tiempo es cuestionable (p. E37).
+ * - Validez (Blair 2007, pp. E37–E40) [V1], no se impone: Ω_A ≲ 0,1; campo cercano si Ω_A·r/a < π; P y SV se
+ *   desacoplan con Ω_A·r/a ≳ 5; L/a ≲ 2. La suma de P y SV donde se solapan en el tiempo es cuestionable (p. E37).
  *
  * Columna de Heelan (FUENTES_SPRINT5.md, «Heelan escalado y superposición no lineal»; Blair 2008):
  * - La columna se parte en M elementos iguales (M impar, típicamente 41; resultados independientes de M si M ≳ 21,
@@ -46,7 +46,10 @@
  *   pesan (j + M1 − 1)^A − (j + M1 − 2)^A [V1]. Reflejar la columna cuando el cebo está más cerca del tope es inferido.
  *   A en (0, 1]: A > 1 no tiene sentido físico (p. 240) [V1].
  * - heelan_column: el elemento m inicia en |z_m − z_cebo|/VOD, con z_cebo el centro del elemento del cebo (inferido de
- *   la descripción, la fuente no da la fórmula); las componentes (radial, axial) se suman directamente.
+ *   la descripción, la fuente no da la fórmula); las componentes (radial, axial) se suman directamente. r = 0 no se
+ *   admite (el elemento de Heelan exige r > 0). La onda solo existe en los instantes de t_s: si el vector termina antes
+ *   de la última llegada, el pico sale truncado SIN aviso. Última llegada ≈ máx sobre los elementos de
+ *   |z_m − z_cebo|/VOD + R_m/Vs (R_m = distancia del elemento m al punto), más la duración del pulso, ~30/γ.
  * - vector_peak: máx √(radial² + axial²) de la onda; el pico se toma siempre de la onda, nunca de G_n.
  *
  * Las entradas no admiten NaN ni infinito; los errores son de dominio (ver validation.hpp).
@@ -60,6 +63,7 @@
 #include <cstdint>
 #include <limits>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "blastingpy/validation.hpp"
@@ -260,6 +264,15 @@ namespace detail {
 
 inline void check_n(int n) { validation::require_in_range(n, 2, 20, "n"); }
 
+/// A en (0, 1]. «Sin sentido físico» (Blair 2008 p. 240) solo se dice de A > 1; con A ≤ 0 el mensaje da el rango.
+inline void check_charge_exponent(double a) {
+    validation::require_finite(a, "charge_exponent");
+    validation::require(a > 0.0 && a <= 1.0, "charge_exponent",
+                        a > 1.0 ? "must be within (0, 1] (A > 1 has no physical meaning, Blair 2008 p. 240)"
+                                : "must be within (0, 1]",
+                        a);
+}
+
 inline void check_source(const PressureSource& s) {
     validation::require_positive(s.vn_pressure_pa, "vn_pressure_pa");
     check_n(s.n);
@@ -387,9 +400,7 @@ struct Column {
 inline std::vector<double> column_weights(int elements, int primer_element, double charge_exponent) {
     validation::require(elements >= 1 && elements % 2 == 1, "elements", "must be an odd integer >= 1", elements);
     validation::require_in_range(primer_element, 1, elements, "primer_element");
-    validation::require_finite(charge_exponent, "charge_exponent");
-    validation::require(charge_exponent > 0.0 && charge_exponent <= 1.0, "charge_exponent",
-                        "must be within (0, 1] (A > 1 has no physical meaning, Blair 2008 p. 240)", charge_exponent);
+    detail::check_charge_exponent(charge_exponent);
     const int M = elements;
     const bool mirror = primer_element > (M + 1) / 2;  // cebo más cerca del tope: se calcula reflejado (inferido)
     const int m1 = mirror ? M + 1 - primer_element : primer_element;
@@ -413,8 +424,9 @@ inline double vector_peak(const Waveform& waveform) {
     return best;
 }
 
-/// Velocidad (mm/s) de la columna en (r, z): suma de elementos de Heelan iniciados a la VOD desde el cebo, cada uno
-/// con su peso de column_weights.
+/// Velocidad (mm/s) de la columna en (r, z), r > 0: suma de elementos de Heelan iniciados a la VOD desde el cebo, cada
+/// uno con su peso de column_weights. t_s debe cubrir hasta la última llegada (máx |z_m − z_cebo|/VOD + R_m/Vs) más
+/// ~30/γ: si termina antes, el pico queda truncado sin aviso.
 inline Waveform heelan_column(const PressureSource& source, const Medium& medium, const Column& column, double r,
                               double z, const std::vector<double>& t_s) {
     validation::require_positive(column.hole_radius_m, "hole_radius_m");
@@ -445,37 +457,82 @@ inline Waveform heelan_column(const PressureSource& source, const Medium& medium
 //
 // - superpose: v(t) = Σ_j w_j·s(t − d_j), la semilla s convolucionada con una serie de impulsos (Hinzen 1988 ecs. 3 y
 //   5–7, la suma sobre i es inferida porque la ec. 3 se imprime sin sumatoria; Blair 1999 ec. 1a, p. 336) [V1]. Salida
-//   desde t = 0 (muestra i en t = i/fs); la llegada entre dos muestras reparte el impulso linealmente (inferido).
+//   desde t = 0 (muestra i en t = i/fs); la llegada entre dos muestras reparte el impulso linealmente (inferido). Una
+//   llegada a menos de 1e-9 muestras de una muestra entera cae en ella (inferido): 9·0,001 s y 0,009 s a 1 kHz dan la
+//   misma onda. Más de 1e8 muestras es error de dominio (tiempos que no están en segundos).
+// - Tolerancia de tiempos, time_tolerance_s = 1 ns (elección de diseño, inferida: ninguna fuente la da): el pozo s
+//   «ya inició» respecto del pozo n si t_s < t_n − 1 ns, y la ventana de carga es [t, t + ventana − 1 ns). Así dos
+//   tiempos nominalmente iguales que salen de sumas de retardos distintas (0,1 + 0,2 frente a 0,3) son un empate.
 // - screening_factor: S = 1/(1 + g·h⁻²·√N_S) con piso 0,2 «por falta de datos de campo cercano» (Blair 1999 ecs. 10b–10c,
 //   pp. 345–346) [V1]; g = 23337 de la Fig. 7c; N_S = 0 da S = 1.
 // - screening_counts: N_S = pozos ya iniciados cuyo centro cae en el rectángulo de ancho = espaciamiento entre el pozo y
-//   el monitor (Blair 1999, Fig. 7a) [V1]; que el rectángulo quede centrado en la recta es inferido del dibujo; «ya
-//   iniciado» = tiempo de iniciación estrictamente menor (los de igual tiempo no se cuentan, inferido).
+//   el monitor (Blair 1999, Fig. 7a) [V1]; que el rectángulo quede centrado en la recta es inferido del dibujo, y que
+//   sus bordes cuenten (≤) también es elección de diseño (inferido). El rectángulo termina en el monitor: un pozo más
+//   allá del monitor NO cuenta. Los pozos de igual tiempo (dentro de la tolerancia) no se cuentan entre sí (inferido).
 // - charge_scaling_weights: C_n de Blair (2008) ec. 10 tal como está impresa (p. 239) [V1], con r_n (ec. 7), el mismo r_n
 //   en ambos términos. NO es la resta F_n − F_{n−1} con cada F con su propio r (da otro valor; ver FUENTES_SPRINT5.md).
 //   Primer pozo (h infinito): C_1 = w_1^A. P = 4 por omisión es elección de diseño: la fuente solo pide un entero positivo.
+//   Los vectores van en orden de iniciación. Empates (tiempos a menos de la tolerancia; inferido, la fuente no los
+//   trata): van seguidos, en cualquier orden entre sí, y el h de cada uno se mide solo a los pozos que iniciaron antes
+//   por más de la tolerancia, nunca a su par (infinito si no hay ninguno).
 // - damage_weights: E_n = S_n/D_n con D_n (ec. 16), p_ns (ec. 18) y S_n (ec. 20) de Blair (2008, pp. 241–242) [V1], en
 //   planta (inferido: pozos y monitor a la misma cota). g va en m² (inferido, para que g/d² sea adimensional).
-// - max_charge_per_window: mayor carga que inicia en una ventana [t, t + ventana); 8 ms viene de Duvall et al. (1963)
-//   según Blair (1999, p. 337) [V2]; Blair dice que no hay nada especial en 8 ms.
+//   Apantalla todo pozo ya iniciado con a·b > 0, literal de la fuente: también uno MÁS ALLÁ del monitor (caso que la
+//   fuente no discute), a diferencia de screening_counts. S_n no lleva piso (la ec. 20 no lo tiene) mientras que
+//   screening_factor sí (0,2): a distancias de campo cercano g/d² es enorme (g sale de monitores a ≈ 99–376 m, Blair
+//   1999 Fig. 7b) y un solo pozo en la recta deja E_n casi en 0; ahí el peso es una extrapolación sin datos.
+// - Coincidencias (en screening_counts y damage_weights): el monitor sobre un pozo o dos pozos en el mismo punto son
+//   error de dominio para todo par, inicien en el orden que inicien.
+// - max_charge_per_window: mayor carga que inicia en una ventana [t, t + ventana) (con la tolerancia de arriba); 8 ms
+//   viene de Duvall et al. (1963) según Blair (1999, p. 337) [V2]; Blair dice que no hay nada especial en 8 ms.
+
+/// Tolerancia de tiempos (s): dos tiempos a menos de 1 ns son el mismo. Elección de diseño (inferida, no viene de una
+/// fuente): muy por debajo de la resolución de un detonador y muy por encima del redondeo de sumar retardos en double.
+inline constexpr double time_tolerance_s = 1e-9;
+
+/// Tope del largo de una onda superpuesta (muestras): más que eso es error de dominio en vez de una reserva de memoria.
+inline constexpr double max_output_samples = 1e8;
+
+namespace detail {
+
+/// «El pozo s inició antes que el pozo n»: t_s < t_n − tolerancia.
+inline bool fired_before(double t_s, double t_n) { return t_s < t_n - time_tolerance_s; }
+
+/// Posición de una llegada en muestras. A menos de 1e-9 MUESTRAS (no segundos) de una entera es esa entera, para que
+/// el ruido de redondeo de k·Δt no alargue la onda una muestra ni reparta 1e-15 del impulso a la vecina.
+inline double sample_position(double arrival_s, double sample_rate_hz) {
+    const double pos = arrival_s * sample_rate_hz, nearest = std::round(pos);
+    return std::fabs(pos - nearest) <= 1e-9 ? nearest : pos;
+}
+
+/// ¿Cabe en el tope una onda cuya última llegada está en `last_position` muestras? (falso también con infinito)
+inline bool output_fits(double last_position, std::size_t seed_samples) {
+    return std::ceil(last_position) + static_cast<double>(seed_samples) + 1.0 <= max_output_samples;
+}
+
+}  // namespace detail
 
 /// v(t) = Σ_j w_j·s(t − d_j) muestreado a fs desde t = 0; largo = ceil(máx llegada·fs) + largo(semilla) + 1.
 inline std::vector<double> superpose(const std::vector<double>& seed, double sample_rate_hz,
                                      const std::vector<double>& arrival_times_s, const std::vector<double>& amplitudes) {
     validation::require(!seed.empty(), "seed", "must not be empty", 0.0);
     validation::require_positive(sample_rate_hz, "sample_rate_hz");
+    validation::require(!arrival_times_s.empty(), "arrival_times_s", "must not be empty", 0.0);
     validation::require(arrival_times_s.size() == amplitudes.size(), "amplitudes",
                         "must have the same length as arrival_times_s", static_cast<double>(amplitudes.size()));
     for (double s : seed) validation::require_finite(s, "seed");
-    double last = 0.0;
+    double latest = 0.0;
     for (std::size_t j = 0; j < arrival_times_s.size(); ++j) {
         validation::require_non_negative(arrival_times_s[j], "arrival_times_s");
         validation::require_finite(amplitudes[j], "amplitudes");
-        last = std::max(last, arrival_times_s[j]);
+        latest = std::max(latest, arrival_times_s[j]);
     }
-    std::vector<double> out(static_cast<std::size_t>(std::ceil(last * sample_rate_hz)) + seed.size() + 1, 0.0);
+    const double last = detail::sample_position(latest, sample_rate_hz);
+    validation::require(detail::output_fits(last, seed.size()), "arrival_times_s",
+                        "gives a waveform of more than 1e8 samples at this sample rate (are the times in seconds?)", latest);
+    std::vector<double> out(static_cast<std::size_t>(std::ceil(last)) + seed.size() + 1, 0.0);
     for (std::size_t j = 0; j < arrival_times_s.size(); ++j) {
-        const double pos = arrival_times_s[j] * sample_rate_hz;
+        const double pos = detail::sample_position(arrival_times_s[j], sample_rate_hz);
         const std::size_t i0 = static_cast<std::size_t>(std::floor(pos));
         const double frac = pos - std::floor(pos);
         for (std::size_t k = 0; k < seed.size(); ++k) {
@@ -495,18 +552,28 @@ inline std::vector<double> superpose(const std::vector<double>& seed, double sam
 //   pp. 340–341; c = 0,25 en su ejemplo) [V1]. Sus conclusiones (p. 362) dicen que los números salen «del rango
 //   (−1, +1)»: contradice la sección 2.2 y no se usa. Un factor negativo se recorta a 0 (la ley no da amplitudes
 //   negativas; inferido); si w_j es negativo (polaridad), el factor lo multiplica.
-// - Tiempos: d_jp = d_j + σ_j·z_jp, con d_j el tiempo nominal visto en el monitor (Blair 1999 ec. 9, p. 342) [V1]. La
-//   fuente solo dice que d_jp sale «de una distribución conocida»: NO publica el tipo ni la desviación. La normal con
-//   σ_j que da el usuario por pozo es ELECCIÓN DE DISEÑO, no un valor leído. Un tiempo negativo se recorta a 0.
+// - Tiempos: la ec. 9 de Blair (1999, p. 342) solo define el tiempo nominal visto en el monitor, d_j = retardo de
+//   superficie + retardo de fondo + tiempo de viaje [V1]; NO da su dispersión. d_jp = d_j + σ_j·z_jp, con z normal
+//   estándar y σ_j que da el usuario por pozo, es ELECCIÓN DE DISEÑO, sin marca de verificación: la fuente dice que
+//   d_jp sale «de una distribución conocida» y no publica el tipo ni la desviación. La apoya que el propio Blair
+//   (1999, sección 5, ecs. 17–19, pp. 359–361) modela el tiempo de cada pozo como normal de media μ_j y desviación σ_j.
+// - Los tiempos NO se recortan a 0 (recortarlos fija en 0 la mitad de los sorteos de un pozo nominal en t = 0, trunca
+//   la dispersión, sesga los picos hacia arriba y hace depender el resultado de dónde se pone el origen). Si en una
+//   simulación la llegada más temprana sale negativa, TODAS las de esa simulación se corren ceil(−mín·fs) muestras
+//   enteras: un corrimiento común de muestras enteras no cambia el pico (inferido). Así, sumar una constante de
+//   muestras enteras a todos los tiempos nominales da los mismos picos.
 // - No entra la semilla fluctuante (ecs. 2–4 y 14): su normalización es [NV].
 // - Generador: std::mt19937_64 (secuencia fijada por el estándar) y conversiones escritas a mano, para que la misma
 //   rng_seed dé los mismos picos en MSVC, GCC y Clang; std::normal_distribution y std::uniform_real_distribution no se
 //   usan porque su algoritmo cambia entre bibliotecas. Uniforme u = (k + 1)/2^53 con k los 53 bits altos: (0, 1], así
-//   log(u) nunca ve 0. Box-Muller: z = √(−2·ln u1)·cos(2π·u2), z' = √(−2·ln u1)·sin(2π·u2), las dos salidas del par.
+//   log(u) nunca ve 0 y |z| no pasa de √(2·53·ln 2) ≈ 8,6. Box-Muller: z = √(−2·ln u1)·cos(2π·u2),
+//   z' = √(−2·ln u1)·sin(2π·u2), las dos salidas del par.
 // - Orden de los sorteos (fijo): por cada simulación p y cada pozo j en el orden de entrada, u1 y luego u2; z va al
 //   retardo y z' a la amplitud. Se sortean siempre, aunque σ_j o c sean 0, para que cambiarlos no corra la secuencia.
-// - log, cos y sin no redondean igual en todas las bibliotecas: entre plataformas los picos coinciden a ~1e-9
-//   relativo, no bit a bit.
+// - Entre plataformas los picos coinciden a ~1e-9 relativo, no bit a bit, por dos causas: log, cos y sin no redondean
+//   igual en todas las bibliotecas, y el compilador puede contraer a·b + c en una FMA (un solo redondeo).
+// - Largo: antes de simular se comprueba el peor caso, tiempos nominales ± 10·σ_j (cota holgada de |z| ≤ 8,6) con su
+//   corrimiento; más de 1e8 muestras es error de dominio.
 
 /// Pico |v| de cada una de `simulations` superposiciones con d_jp = d_j + σ_j·z y w_jp = w_j·(1 + c·z').
 inline std::vector<double> monte_carlo_peaks(const std::vector<double>& seed, double sample_rate_hz,
@@ -515,27 +582,45 @@ inline std::vector<double> monte_carlo_peaks(const std::vector<double>& seed, do
                                              const std::vector<double>& delay_sigma_s, double amplitude_cv,
                                              int simulations, std::uint64_t rng_seed) {
     const std::size_t holes = nominal_arrival_times_s.size();
+    validation::require(holes > 0, "nominal_arrival_times_s", "must not be empty", 0.0);
     validation::require(amplitudes.size() == holes, "amplitudes", "must have the same length as nominal_arrival_times_s",
                         static_cast<double>(amplitudes.size()));
     validation::require(delay_sigma_s.size() == holes, "delay_sigma_s",
                         "must have the same length as nominal_arrival_times_s", static_cast<double>(delay_sigma_s.size()));
+    validation::require_positive(sample_rate_hz, "sample_rate_hz");
+    double latest = 0.0, earliest = 0.0;  // peor caso con |z| <= 10
     for (std::size_t j = 0; j < holes; ++j) {
         validation::require_non_negative(nominal_arrival_times_s[j], "nominal_arrival_times_s");
         validation::require_non_negative(delay_sigma_s[j], "delay_sigma_s");
+        latest = std::max(latest, nominal_arrival_times_s[j] + 10.0 * delay_sigma_s[j]);
+        earliest = std::min(earliest, nominal_arrival_times_s[j] - 10.0 * delay_sigma_s[j]);
     }
     validation::require_non_negative(amplitude_cv, "amplitude_cv");
     validation::require(simulations >= 1, "simulations", "must be >= 1", simulations);
+    // el corrimiento de una simulación no pasa de −earliest más una muestra
+    validation::require(detail::output_fits((latest - earliest) * sample_rate_hz + 1.0, seed.size()),
+                        "nominal_arrival_times_s",
+                        "plus 10 times delay_sigma_s gives a waveform of more than 1e8 samples at this sample rate "
+                        "(are the times in seconds?)",
+                        latest);
     std::mt19937_64 generator(rng_seed);
     auto uniform = [&generator] { return static_cast<double>((generator() >> 11) + 1) / 9007199254740992.0; };  // 2^53
     std::vector<double> peaks(static_cast<std::size_t>(simulations), 0.0), times(holes), weights(holes);
     for (double& peak : peaks) {
+        double first = 0.0;
         for (std::size_t j = 0; j < holes; ++j) {
             const double radius = std::sqrt(-2.0 * std::log(uniform()));
             const double angle = 6.283185307179586 * uniform();
-            times[j] = std::max(0.0, nominal_arrival_times_s[j] + delay_sigma_s[j] * radius * std::cos(angle));
+            times[j] = nominal_arrival_times_s[j] + delay_sigma_s[j] * radius * std::cos(angle);  // sin recorte
             weights[j] = amplitudes[j] * std::max(0.0, 1.0 + amplitude_cv * radius * std::sin(angle));
+            first = std::min(first, times[j]);
         }
-        // superpose valida la semilla, la frecuencia de muestreo y las amplitudes
+        if (first < 0.0) {  // corrimiento común de muestras enteras: no cambia el pico
+            const double shift = std::ceil(-first * sample_rate_hz) / sample_rate_hz;
+            // el máx no recorta ningún sorteo: solo absorbe el redondeo de first + shift (del orden de 1e-16 s)
+            for (double& t : times) t = std::max(0.0, t + shift);
+        }
+        // superpose valida la semilla y las amplitudes
         for (double v : superpose(seed, sample_rate_hz, times, weights)) peak = std::max(peak, std::fabs(v));
     }
     return peaks;
@@ -551,10 +636,14 @@ inline double screening_factor(double distance_m, int screening_count, double g 
 }
 
 namespace detail {
+/// Pozos y monitor: vectores no vacíos y del mismo largo, todo finito, y ninguna coincidencia (monitor sobre un pozo o
+/// dos pozos en el mismo punto), para todo par y sin mirar el orden de iniciación. Los índices del mensaje van desde 0.
 inline void check_holes(const std::vector<double>& x, const std::vector<double>& y, const std::vector<double>& t,
                         double monitor_x, double monitor_y) {
-    validation::require(x.size() == y.size() && x.size() == t.size(), "y", "x, y and firing_times_s must have the same length",
-                        static_cast<double>(y.size()));
+    validation::require(!x.empty(), "x", "must not be empty", 0.0);
+    validation::require(y.size() == x.size(), "y", "must have the same length as x", static_cast<double>(y.size()));
+    validation::require(t.size() == x.size(), "firing_times_s", "must have the same length as x",
+                        static_cast<double>(t.size()));
     for (std::size_t i = 0; i < x.size(); ++i) {
         validation::require_finite(x[i], "x");
         validation::require_finite(y[i], "y");
@@ -562,10 +651,24 @@ inline void check_holes(const std::vector<double>& x, const std::vector<double>&
     }
     validation::require_finite(monitor_x, "monitor_x");
     validation::require_finite(monitor_y, "monitor_y");
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        if (x[i] == monitor_x && y[i] == monitor_y)
+            validation::require(false, "monitor_x",
+                                "must not coincide with a hole: the monitor is at the position of hole " +
+                                    std::to_string(i) + " (holes are numbered from 0)",
+                                monitor_x);
+        for (std::size_t j = 0; j < i; ++j)
+            if (x[i] == x[j] && y[i] == y[j])
+                validation::require(false, "x",
+                                    "must not repeat a position: holes " + std::to_string(j) + " and " +
+                                        std::to_string(i) + " are at the same point (holes are numbered from 0)",
+                                    x[i]);
+    }
 }
 }  // namespace detail
 
-/// N_S de cada pozo (en el orden de entrada): ya iniciados dentro del rectángulo pozo-monitor de ancho `spacing_m`.
+/// N_S de cada pozo (en el orden de entrada): ya iniciados dentro del rectángulo pozo-monitor de ancho `spacing_m`
+/// (bordes incluidos; no cuenta un pozo más allá del monitor).
 inline std::vector<int> screening_counts(const std::vector<double>& x, const std::vector<double>& y,
                                          const std::vector<double>& firing_times_s, double monitor_x, double monitor_y,
                                          double spacing_m) {
@@ -573,10 +676,9 @@ inline std::vector<int> screening_counts(const std::vector<double>& x, const std
     validation::require_positive(spacing_m, "spacing_m");
     std::vector<int> counts(x.size(), 0);
     for (std::size_t n = 0; n < x.size(); ++n) {
-        const double ax = monitor_x - x[n], ay = monitor_y - y[n], len = std::hypot(ax, ay);
-        validation::require_positive(len, "monitor_x");  // el monitor no puede coincidir con un pozo
+        const double ax = monitor_x - x[n], ay = monitor_y - y[n], len = std::hypot(ax, ay);  // > 0: check_holes
         for (std::size_t s = 0; s < x.size(); ++s) {
-            if (!(firing_times_s[s] < firing_times_s[n])) continue;
+            if (!detail::fired_before(firing_times_s[s], firing_times_s[n])) continue;
             const double bx = x[s] - x[n], by = y[s] - y[n];
             const double along = (ax * bx + ay * by) / len, across = std::fabs(ax * by - ay * bx) / len;
             if (along >= 0.0 && along <= len && across <= 0.5 * spacing_m) ++counts[n];
@@ -586,18 +688,18 @@ inline std::vector<int> screening_counts(const std::vector<double>& x, const std
 }
 
 /// C_n de Blair (2008) ec. 10, con los vectores en orden de iniciación; h = distancia al pozo ya iniciado más cercano
-/// (infinito para el primero o si no hay ninguno).
+/// (infinito para el primero o si no hay ninguno). Pozos empatados (a menos de time_tolerance_s): seguidos, en
+/// cualquier orden, y con h medido solo a los que iniciaron antes que el empate, no entre ellos.
 inline std::vector<double> charge_scaling_weights(const std::vector<double>& charges_kg,
                                                   const std::vector<double>& nearest_fired_distance_m, double spacing_m,
                                                   double charge_exponent, double d_factor = 1.0, int p = 4) {
+    validation::require(!charges_kg.empty(), "charges_kg", "must not be empty", 0.0);
     validation::require(charges_kg.size() == nearest_fired_distance_m.size(), "nearest_fired_distance_m",
                         "must have the same length as charges_kg", static_cast<double>(nearest_fired_distance_m.size()));
-    validation::require(!charges_kg.empty(), "charges_kg", "must not be empty", 0.0);
     validation::require_positive(spacing_m, "spacing_m");
     validation::require_positive(d_factor, "d_factor");
     validation::require(p >= 1, "p", "must be an integer >= 1", p);
-    validation::require(std::isfinite(charge_exponent) && charge_exponent > 0.0 && charge_exponent <= 1.0, "charge_exponent",
-                        "must be within (0, 1] (A > 1 has no physical meaning, Blair 2008 p. 240)", charge_exponent);
+    detail::check_charge_exponent(charge_exponent);
     double total = 0.0;
     for (std::size_t n = 0; n < charges_kg.size(); ++n) {
         validation::require_positive(charges_kg[n], "charges_kg");
@@ -618,7 +720,8 @@ inline std::vector<double> charge_scaling_weights(const std::vector<double>& cha
     return c;
 }
 
-/// E_n = S_n/D_n de Blair (2008) ecs. 16 y 20 en planta; resultados en el orden de entrada.
+/// E_n = S_n/D_n de Blair (2008) ecs. 16 y 20 en planta; resultados en el orden de entrada. S_n sin piso; apantalla
+/// todo pozo ya iniciado con a·b > 0, también uno más allá del monitor.
 inline std::vector<double> damage_weights(const std::vector<double>& x, const std::vector<double>& y,
                                           const std::vector<double>& charges_kg, const std::vector<double>& firing_times_s,
                                           double monitor_x, double monitor_y, double spacing_m, double eta,
@@ -626,7 +729,6 @@ inline std::vector<double> damage_weights(const std::vector<double>& x, const st
     detail::check_holes(x, y, firing_times_s, monitor_x, monitor_y);
     validation::require(charges_kg.size() == x.size(), "charges_kg", "must have the same length as x",
                         static_cast<double>(charges_kg.size()));
-    validation::require(!x.empty(), "x", "must not be empty", 0.0);
     validation::require_positive(spacing_m, "spacing_m");
     validation::require_non_negative(eta, "eta");
     validation::require_non_negative(g, "g");
@@ -638,13 +740,11 @@ inline std::vector<double> damage_weights(const std::vector<double>& x, const st
     mean /= static_cast<double>(x.size());
     std::vector<double> e(x.size());
     for (std::size_t n = 0; n < x.size(); ++n) {
-        const double ax = monitor_x - x[n], ay = monitor_y - y[n], d = std::hypot(ax, ay);
-        validation::require_positive(d, "monitor_x");
+        const double ax = monitor_x - x[n], ay = monitor_y - y[n], d = std::hypot(ax, ay);  // > 0: check_holes
         double damage = 0.0, shield = 0.0;
         for (std::size_t j = 0; j < x.size(); ++j) {
-            if (!(firing_times_s[j] < firing_times_s[n])) continue;
-            const double bx = x[j] - x[n], by = y[j] - y[n], h = std::hypot(bx, by);
-            validation::require_positive(h, "x");  // dos pozos en el mismo punto
+            if (!detail::fired_before(firing_times_s[j], firing_times_s[n])) continue;
+            const double bx = x[j] - x[n], by = y[j] - y[n], h = std::hypot(bx, by);  // > 0: check_holes
             damage += charges_kg[j] / mean * std::pow(spacing_m / h, 3.0);
             if (ax * bx + ay * by > 0.0) {
                 const double perp = std::fabs(ax * by - ay * bx) / d;
@@ -656,21 +756,25 @@ inline std::vector<double> damage_weights(const std::vector<double>& x, const st
     return e;
 }
 
-/// Mayor carga que inicia dentro de una ventana [t, t + window_s) con t en cada tiempo de iniciación (0 si no hay pozos).
+/// Mayor carga que inicia dentro de una ventana [t, t + window_s − time_tolerance_s) con t en cada tiempo de
+/// iniciación: dos pozos separados nominalmente por la ventana (8 ms) no caen juntos por el ruido de redondeo.
 inline double max_charge_per_window(const std::vector<double>& firing_times_s, const std::vector<double>& charges_kg,
                                     double window_s = 0.008) {
+    validation::require(!firing_times_s.empty(), "firing_times_s", "must not be empty", 0.0);
     validation::require(firing_times_s.size() == charges_kg.size(), "charges_kg",
                         "must have the same length as firing_times_s", static_cast<double>(charges_kg.size()));
     validation::require_positive(window_s, "window_s");
+    validation::require(window_s > time_tolerance_s, "window_s", "must be greater than the time tolerance (1e-9 s)",
+                        window_s);
     for (std::size_t i = 0; i < charges_kg.size(); ++i) {
         validation::require_finite(firing_times_s[i], "firing_times_s");
-        validation::require_non_negative(charges_kg[i], "charges_kg");
+        validation::require_positive(charges_kg[i], "charges_kg");
     }
     double best = 0.0;
     for (double t0 : firing_times_s) {
         double sum = 0.0;
         for (std::size_t j = 0; j < firing_times_s.size(); ++j)
-            if (firing_times_s[j] >= t0 && firing_times_s[j] - t0 < window_s) sum += charges_kg[j];
+            if (firing_times_s[j] >= t0 && firing_times_s[j] - t0 < window_s - time_tolerance_s) sum += charges_kg[j];
         best = std::max(best, sum);
     }
     return best;

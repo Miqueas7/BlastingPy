@@ -117,14 +117,83 @@ def test_full_blast_weights_from_python():
     assert nf.max_charge_per_window([0.0, 0.005, 0.010], [100.0] * 3) == 200.0
 
 
+def test_time_tolerance_from_python():
+    assert nf._time_tolerance_s == 1e-9
+    # 0.018 - 0.010 = 0.007999999999999998: nominally one window apart, not together
+    assert nf.max_charge_per_window([0.010, 0.018], [100.0, 100.0]) == 100.0
+    assert nf.max_charge_per_window([k * 0.008 for k in range(40)], [100.0] * 40) == 100.0
+    # 0.1 + 0.2 = 0.30000000000000004 against 0.3: a tie, neither hole fired before the other
+    tie = [0.1 + 0.2, 0.3]
+    assert nf.screening_counts([0.0, 50.0], [0.0, 0.0], tie, 100.0, 0.0, 5.0) == [0, 0]
+    assert nf.damage_weights([0.0, 5.0], [0.0, 0.0], [1.0, 1.0], tie, 100.0, 0.0, 5.0, 0.2) == [1.0, 1.0]
+    assert len(nf.superpose([1.0], 1000.0, [9 * 0.001], [1.0])) == len(nf.superpose([1.0], 1000.0, [0.009], [1.0]))
+
+
+DOMAIN = r"Domain error \[BlastingPy\]: parameter"
+
+
+def test_full_blast_domain_messages():
+    inf = float("inf")
+    # the monitor on a hole and two holes at one point say what coincides, whatever the firing order
+    with pytest.raises(ValueError, match=DOMAIN + " 'monitor_x' must not coincide with a hole.*hole 1"):
+        nf.screening_counts([0.0, 100.0], [0.0, 0.0], [0.0, 1.0], 100.0, 0.0, 5.0)
+    with pytest.raises(ValueError, match=DOMAIN + " 'monitor_x' must not coincide with a hole.*hole 1"):
+        nf.damage_weights([0.0, 100.0], [0.0, 0.0], [1.0, 1.0], [0.0, 1.0], 100.0, 0.0, 5.0, 0.2)
+    for times in ([0.0, 1.0, 2.0], [2.0, 1.0, 0.0], [0.0, 0.0, 0.0]):
+        with pytest.raises(ValueError, match=DOMAIN + " 'x' must not repeat a position: holes 0 and 2"):
+            nf.screening_counts([7.0, 0.0, 7.0], [3.0, 0.0, 3.0], times, 100.0, 0.0, 5.0)
+        with pytest.raises(ValueError, match=DOMAIN + " 'x' must not repeat a position: holes 0 and 2"):
+            nf.damage_weights([7.0, 0.0, 7.0], [3.0, 0.0, 3.0], [1.0] * 3, times, 100.0, 0.0, 5.0, 0.2)
+    # the length mismatch names the vector whose length is wrong
+    with pytest.raises(ValueError, match=DOMAIN + " 'y' must have the same length as x"):
+        nf.screening_counts([0.0], [0.0, 1.0], [0.0], 100.0, 0.0, 5.0)
+    with pytest.raises(ValueError, match=DOMAIN + " 'firing_times_s' must have the same length as x"):
+        nf.damage_weights([0.0], [0.0], [1.0], [0.0, 1.0], 100.0, 0.0, 5.0, 0.2)
+    with pytest.raises(ValueError, match=DOMAIN + " 'charges_kg' must have the same length as firing_times_s"):
+        nf.max_charge_per_window([0.0], [1.0, 2.0])
+    # empty vectors and charges <= 0
+    with pytest.raises(ValueError, match=DOMAIN + " 'x' must not be empty"):
+        nf.screening_counts([], [], [], 100.0, 0.0, 5.0)
+    with pytest.raises(ValueError, match=DOMAIN + " 'x' must not be empty"):
+        nf.damage_weights([], [], [], [], 100.0, 0.0, 5.0, 0.2)
+    with pytest.raises(ValueError, match=DOMAIN + " 'charges_kg' must not be empty"):
+        nf.charge_scaling_weights([], [], 5.0, 0.7)
+    with pytest.raises(ValueError, match=DOMAIN + " 'firing_times_s' must not be empty"):
+        nf.max_charge_per_window([], [])
+    with pytest.raises(ValueError, match=DOMAIN + " 'arrival_times_s' must not be empty"):
+        nf.superpose([1.0], 1000.0, [], [])
+    with pytest.raises(ValueError, match=DOMAIN + " 'nominal_arrival_times_s' must not be empty"):
+        nf.monte_carlo_peaks([1.0], 1000.0, [], [], [], 0.0, 1, 1)
+    with pytest.raises(ValueError, match=DOMAIN + " 'charges_kg' must be strictly positive"):
+        nf.max_charge_per_window([0.0, 0.1], [1.0, 0.0])
+    with pytest.raises(ValueError, match=DOMAIN + " 'charges_kg' must be strictly positive"):
+        nf.damage_weights([0.0, 5.0], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0], 100.0, 0.0, 5.0, 0.2)
+    with pytest.raises(ValueError, match=DOMAIN + " 'window_s'"):
+        nf.max_charge_per_window([0.0], [1.0], window_s=1e-9)
+    # times that are not in seconds: a domain error, not a huge allocation
+    with pytest.raises(ValueError, match=DOMAIN + " 'arrival_times_s' gives a waveform of more than 1e8 samples"):
+        nf.superpose([1.0], 1000.0, [1e9], [1.0])
+    with pytest.raises(ValueError, match=DOMAIN + " 'nominal_arrival_times_s' plus 10 times delay_sigma_s"):
+        nf.monte_carlo_peaks([1.0], 1000.0, [0.0], [1.0], [1e9], 0.0, 1, 1)
+    # "no physical meaning" is said of A > 1 only
+    with pytest.raises(ValueError, match=DOMAIN + r" 'charge_exponent' must be within \(0, 1\] \(A > 1 has no physical"):
+        nf.charge_scaling_weights([1.0, 2.0], [inf, 5.0], 5.0, 1.2)
+    for call in (lambda: nf.charge_scaling_weights([1.0, 2.0], [inf, 5.0], 5.0, 0.0), lambda: nf.column_weights(15, 1, 0.0)):
+        with pytest.raises(ValueError, match=DOMAIN + r" 'charge_exponent' must be within \(0, 1\]\. Received: 0$"):
+            call()
+
+
 def test_monte_carlo_from_python():
     seed = np.array([0.0, 0.6, 1.0, -0.4, 0.1])
     arrivals, amplitudes = [0.0, 0.002, 0.005], [1.0, 0.8, -0.5]
-    # Mismos cuatro picos que fija la prueba de C++ (candado de portabilidad; rel 1e-9, no bit a bit).
+    # Mismos cuatro picos que fija la prueba de C++ (candado de portabilidad; rel 1e-9, no bit a bit). En las cuatro
+    # simulaciones la primera llegada sale negativa: se corre la simulación entera, no se recorta a 0.
     peaks = nf.monte_carlo_peaks(seed, 1000.0, arrivals, amplitudes, [1e-3] * 3, 0.25, 4, 12345)
-    assert list(peaks) == pytest.approx(
-        [1.5646578308494763, 0.9396280591874882, 0.984018375475602, 1.391979964537508], rel=1e-9
-    )
+    pinned = [0.9346395891593839, 0.9014958054814796, 0.7745597484280603, 1.0646254016189869]
+    assert list(peaks) == pytest.approx(pinned, rel=1e-9)
+    # el origen del tiempo no cambia los picos: la misma voladura 1 s más tarde
+    later = nf.monte_carlo_peaks(seed, 1000.0, [t + 1.0 for t in arrivals], amplitudes, [1e-3] * 3, 0.25, 4, 12345)
+    assert list(later) == pytest.approx(pinned, rel=1e-9)
     still = nf.monte_carlo_peaks(seed, 1000.0, arrivals, amplitudes, [0.0] * 3, 0.0, 5, rng_seed=1)
     assert list(still) == pytest.approx([np.abs(nf.superpose(seed, 1000.0, arrivals, amplitudes)).max()] * 5, rel=1e-12)
     with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter 'delay_sigma_s'"):

@@ -90,13 +90,19 @@ TEST(NearfieldColumn, NonLinearSuperpositionLowersThePeak) {
 }
 
 TEST(NearfieldColumn, BottomPrimedRadiationIsNotSymmetric) {
-    // Con cebado en el fondo la SV se dirige (Blair 2007 p. E33): por encima y por debajo el pico difiere.
+    // Con VOD finita la radiación es más fuerte hacia donde viaja la detonación: Blair (2007, p. E33) lo reporta para
+    // una columna iniciada arriba (SV grande dirigida hacia abajo); con cebado en el fondo se infiere el espejo, así
+    // que el pico es mayor por encima de la columna que por debajo.
     const double g = kSource.gamma_per_s, r = 2.0, vod = 5000.0;
     nf::Column col{kA, 0.0, 2.0, 21, 1, vod, 1.0};  // A = 1: la asimetría viene solo de la VOD
     const auto t = grid(0.0, std::hypot(r, 7.0) / kRock.s_velocity_m_s + 2.0 / vod + 30 / g, 0.01 / g);
     const double below = nf::vector_peak(nf::heelan_column(kSource, kRock, col, r, col.z_bottom - 5.0, t));
     const double above = nf::vector_peak(nf::heelan_column(kSource, kRock, col, r, col.z_top + 5.0, t));
-    EXPECT_GT(std::fabs(above - below), 0.05 * std::max(above, below));
+    EXPECT_GT(above, 1.05 * below);
+    col.primer_element = col.elements;  // iniciada arriba (el caso de la fuente): es el espejo exacto
+    expect_rel(nf::vector_peak(nf::heelan_column(kSource, kRock, col, r, col.z_bottom - 5.0, t)), above, 1e-9);
+    expect_rel(nf::vector_peak(nf::heelan_column(kSource, kRock, col, r, col.z_top + 5.0, t)), below, 1e-9);
+    col.primer_element = 1;
     col.vod_m_s = 1e12;  // iniciación casi instantánea: simétrica (los retardos de ~1e-12 s dejan ~1e-8 relativo)
     expect_rel(nf::vector_peak(nf::heelan_column(kSource, kRock, col, r, col.z_top + 5.0, t)),
                nf::vector_peak(nf::heelan_column(kSource, kRock, col, r, col.z_bottom - 5.0, t)), 1e-6);
