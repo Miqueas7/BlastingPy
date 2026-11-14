@@ -1,0 +1,308 @@
+{
+  "schema": 1,
+  "form": "P = K * (D / W^(1/3))^-beta, median (best fit); K and the scaled distance in the units of each equation",
+  "se_db_basis": "inferred: RI 8485 prints the 'transformed standard error' under 'pct', but 20*log10(1 + SE/100) reproduces 13 of the 14 rows, so it is in dB (= 20 * sigma_log10)",
+  "charge_basis": "inferred: W in RI 8485 is the charge per delay (Table 3, p. 30, PDF p. 37, computes the scaled distance with Lb/delay)",
+  "sources": "docs/investigacion/FUENTES_SPRINT3.md, section 'Ecuaciones publicadas'",
+  "equations": [
+    {
+      "id": "USBM-RI8485/coal-highwall/0.1Hz",
+      "system": "0.1Hz",
+      "k": 0.162,
+      "beta": 0.794,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.739,
+      "se_db": 5.5,
+      "n": 115,
+      "scaled_distance_range": [
+        10,
+        900
+      ],
+      "range_source": "Fig. B-1, p. 78 (PDF p. 84), read from figure, approximate (+-20 %)",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": []
+    },
+    {
+      "id": "USBM-RI8485/coal-highwall/2Hz",
+      "system": "2Hz",
+      "k": 0.146,
+      "beta": 0.823,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.774,
+      "se_db": 4.9,
+      "n": 83,
+      "scaled_distance_range": [
+        10,
+        900
+      ],
+      "range_source": "Fig. B-1, p. 78 (PDF p. 84), read from figure, approximate (+-20 %)",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": []
+    },
+    {
+      "id": "USBM-RI8485/coal-highwall/5Hz",
+      "system": "5Hz",
+      "k": 0.087,
+      "beta": 0.725,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.839,
+      "se_db": 4.1,
+      "n": 41,
+      "scaled_distance_range": [
+        10,
+        550
+      ],
+      "range_source": "Fig. B-1, p. 78 (PDF p. 84), read from figure, approximate (+-20 %)",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": []
+    },
+    {
+      "id": "USBM-RI8485/coal-highwall/c-slow",
+      "system": "c-slow",
+      "k": 0.015,
+      "beta": 0.885,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.792,
+      "se_db": null,
+      "n": 89,
+      "scaled_distance_range": [
+        10,
+        650
+      ],
+      "range_source": "Fig. B-1, p. 78 (PDF p. 84), read from figure, approximate (+-20 %)",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": [
+        "se_db is null: the printed transformed standard error (5.7) does not match the printed standard error of 83.2 % (which gives 5.26 dB); one of the two is an erratum"
+      ]
+    },
+    {
+      "id": "USBM-RI8485/coal-parting/0.1Hz",
+      "system": "0.1Hz",
+      "k": 169,
+      "beta": 1.623,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.587,
+      "se_db": 6.8,
+      "n": 19,
+      "scaled_distance_range": [
+        400,
+        1700
+      ],
+      "range_source": "Fig. B-1, p. 78 (PDF p. 84), read from figure, approximate (+-20 %)",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": []
+    },
+    {
+      "id": "USBM-RI8485/coal-parting/2Hz",
+      "system": "2Hz",
+      "k": 49.6,
+      "beta": 1.477,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.5,
+      "se_db": 8.3,
+      "n": 16,
+      "scaled_distance_range": [
+        400,
+        1700
+      ],
+      "range_source": "Fig. B-1, p. 78 (PDF p. 84), read from figure, approximate (+-20 %)",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": []
+    },
+    {
+      "id": "USBM-RI8485/coal-parting/5Hz",
+      "system": "5Hz",
+      "k": 194,
+      "beta": 1.666,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.657,
+      "se_db": 6.2,
+      "n": 16,
+      "scaled_distance_range": [
+        400,
+        1700
+      ],
+      "range_source": "Fig. B-1, p. 78 (PDF p. 84), read from figure, approximate (+-20 %)",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": []
+    },
+    {
+      "id": "USBM-RI8485/coal-parting/c-slow",
+      "system": "c-slow",
+      "k": 41.6,
+      "beta": 1.785,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.603,
+      "se_db": 6.9,
+      "n": 22,
+      "scaled_distance_range": [
+        400,
+        1700
+      ],
+      "range_source": "Fig. B-1, p. 78 (PDF p. 84), read from figure, approximate (+-20 %)",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": []
+    },
+    {
+      "id": "USBM-RI8485/metal-mine-highwall/0.1Hz",
+      "system": "0.1Hz",
+      "k": 0.401,
+      "beta": 0.713,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.679,
+      "se_db": 7.5,
+      "n": 14,
+      "scaled_distance_range": [
+        25,
+        1500
+      ],
+      "range_source": "Fig. B-3, p. 81 (PDF p. 87), read from figure, approximate (+-20 %)",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": []
+    },
+    {
+      "id": "USBM-RI8485/quarry/0.1Hz",
+      "system": "0.1Hz",
+      "k": 0.246,
+      "beta": 0.711,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.58,
+      "se_db": 8.4,
+      "n": 73,
+      "scaled_distance_range": [
+        10,
+        500
+      ],
+      "range_source": "Fig. B-3, p. 81 (PDF p. 87), read from figure, approximate (+-20 %)",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": []
+    },
+    {
+      "id": "USBM-RI8485/quarry-direction-of-initiation/0.1Hz",
+      "system": "0.1Hz",
+      "k": 0.979,
+      "beta": 1.12,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.757,
+      "se_db": 6.9,
+      "n": 10,
+      "scaled_distance_range": null,
+      "range_source": "not printed; the directional lines of Fig. B-4 cannot be matched to the table rows",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": []
+    },
+    {
+      "id": "USBM-RI8485/quarry-behind-face/0.1Hz",
+      "system": "0.1Hz",
+      "k": 0.056,
+      "beta": 0.515,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.571,
+      "se_db": 7.8,
+      "n": 28,
+      "scaled_distance_range": null,
+      "range_source": "not printed; the directional lines of Fig. B-4 cannot be matched to the table rows",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": []
+    },
+    {
+      "id": "USBM-RI8485/quarry-opposite-initiation/0.1Hz",
+      "system": "0.1Hz",
+      "k": 0.028,
+      "beta": 0.098,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.05,
+      "se_db": 9.3,
+      "n": 11,
+      "scaled_distance_range": null,
+      "range_source": "not printed; the directional lines of Fig. B-4 cannot be matched to the table rows",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": [
+        "r = 0.050: no predictive value (beta = 0.098, almost a constant)"
+      ]
+    },
+    {
+      "id": "USBM-RI8485/quarry-front-of-face/0.1Hz",
+      "system": "0.1Hz",
+      "k": 1.317,
+      "beta": 0.966,
+      "units": "psi; ft/lb^(1/3)",
+      "r": 0.793,
+      "se_db": 6.1,
+      "n": 22,
+      "scaled_distance_range": null,
+      "range_source": "not printed; the directional lines of Fig. B-4 cannot be matched to the table rows",
+      "verification": "V1",
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Table B-1, p. 84 (PDF p. 90)",
+      "notes": []
+    },
+    {
+      "id": "OSMRE-BLEP/highwall",
+      "system": null,
+      "k": 0.162,
+      "beta": 0.79,
+      "units": "psi; ft/lb^(1/3)",
+      "r": null,
+      "se_db": null,
+      "n": null,
+      "scaled_distance_range": null,
+      "range_source": "not published by BLEP",
+      "verification": "V1",
+      "citation": "OSMRE (2021). Blast Log Evaluation Program (BLEP) v2.0, Attachment C (PDF p. 21) and PDF p. 16",
+      "notes": [
+        "BLEP does not state the measurement system: RI 8485 fitted this equation with a 0.1-Hz system, but BLEP compares it with the 133 dB limit, which assumes a 2-Hz microphone",
+        "exponent rounded to two decimals by BLEP (RI 8485, Table B-1, has the full value)"
+      ]
+    },
+    {
+      "id": "OSMRE-BLEP/parting",
+      "system": null,
+      "k": 169,
+      "beta": 1.62,
+      "units": "psi; ft/lb^(1/3)",
+      "r": null,
+      "se_db": null,
+      "n": null,
+      "scaled_distance_range": null,
+      "range_source": "not published by BLEP",
+      "verification": "V1",
+      "citation": "OSMRE (2021). Blast Log Evaluation Program (BLEP) v2.0, Attachment C (PDF p. 21) and PDF p. 16",
+      "notes": [
+        "BLEP does not state the measurement system: RI 8485 fitted this equation with a 0.1-Hz system, but BLEP compares it with the 133 dB limit, which assumes a 2-Hz microphone",
+        "exponent rounded to two decimals by BLEP (RI 8485, Table B-1, has the full value)"
+      ]
+    },
+    {
+      "id": "AS2187.2-2006/free-face",
+      "system": null,
+      "k": 516,
+      "beta": 1.45,
+      "units": "kPa; m/kg^(1/3)",
+      "r": null,
+      "se_db": null,
+      "n": null,
+      "scaled_distance_range": null,
+      "range_source": "not published by the secondary source",
+      "verification": "V2",
+      "citation": "AS 2187.2-2006, as quoted by Arup, Strutt help, 'Blast Overpressure' (https://strutt.arup.com/help/Vibration/BlastOverpressure.htm, read 2026-11-14)",
+      "notes": [
+        "single secondary source (Arup, Strutt help); recommended for unconfined surface charges without weather effects",
+        "the definition of Q (charge per delay or total charge) is not verified",
+        "the secondary source does not state the measurement system"
+      ]
+    }
+  ]
+}
