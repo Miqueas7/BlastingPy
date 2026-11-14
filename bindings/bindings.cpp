@@ -14,6 +14,7 @@
 #include "blastingpy/flyrock.hpp"
 #include "blastingpy/least_squares.hpp"
 #include "blastingpy/method_info.hpp"
+#include "blastingpy/nearfield.hpp"
 #include "blastingpy/units.hpp"
 #include "blastingpy/waveform.hpp"
 
@@ -260,4 +261,31 @@ NB_MODULE(_blastingpy_core, m) {
            nb::arg("method"), "Peak |dV/dt| (mm/s^2) of a velocity record (mm/s) and its sample index.");
     wf.def("peak_displacement", &peak_displacement, nb::arg("velocity_mm_s"), nb::arg("sample_rate_hz"),
            "Peak displacement (mm): largest complete half-cycle sum(V dt), halved; value is NaN if none is complete.");
+
+    nb::module_ nfd = m.def_submodule(
+        "_nearfield", "Near field: Holmberg-Persson (original integral and NIOSH modified form), damage extent and "
+                      "critical PPV. PPV in the unit K carries (mm/s with the published constants, kg and m).");
+    nb::enum_<nearfield::HpModel>(nfd, "HpModel", "Holmberg-Persson form.")
+        .value("Original", nearfield::HpModel::Original, "integral with alpha outside (NIOSH eq. 5)")
+        .value("Niosh", nearfield::HpModel::Niosh, "K (q L)^alpha / mean distance^beta (NIOSH eq. 8)");
+    nfd.def("hp_point", &nearfield::hp_point, nb::arg("k"), nb::arg("alpha"), nb::arg("beta"), nb::arg("charge_kg"),
+            nb::arg("distance_m"), "K Q^alpha / R^beta (NIOSH eq. 1).");
+    nfd.def("hp_term", &nearfield::hp_term, nb::arg("linear_charge_kg_m"), nb::arg("z_start"), nb::arg("z_end"),
+            nb::arg("r"), nb::arg("z"),
+            "Closed form (l/r)[atan((z_end - z)/r) + atan((z - z_start)/r)], valid for beta = 2 alpha.");
+    nfd.def("hp_original", &nearfield::hp_original, nb::arg("k"), nb::arg("alpha"), nb::arg("beta"),
+            nb::arg("linear_charge_kg_m"), nb::arg("z_start"), nb::arg("z_end"), nb::arg("r"), nb::arg("z"),
+            "K [l int dz' / (r^2 + (z' - z)^2)^(beta / (2 alpha))]^alpha (NIOSH eq. 5). "
+            "Raises on the axis inside the charged span.");
+    nfd.def("hp_mean_distance", &nearfield::hp_mean_distance, nb::arg("z_start"), nb::arg("z_end"), nb::arg("r"),
+            nb::arg("z"), "NIOSH mean distance (eq. 9).");
+    nfd.def("hp_niosh", &nearfield::hp_niosh, nb::arg("k"), nb::arg("alpha"), nb::arg("beta"),
+            nb::arg("linear_charge_kg_m"), nb::arg("z_start"), nb::arg("z_end"), nb::arg("r"), nb::arg("z"),
+            "K (l L)^alpha / mean distance^beta (NIOSH eq. 8).");
+    nfd.def("hp_damage_extent", &nearfield::hp_damage_extent, nb::arg("model"), nb::arg("k"), nb::arg("alpha"),
+            nb::arg("beta"), nb::arg("linear_charge_kg_m"), nb::arg("z_start"), nb::arg("z_end"), nb::arg("z"),
+            nb::arg("ppv_limit_mm_s"),
+            "Radial distance where the PPV falls to the limit at height z; NaN if it never does.");
+    nfd.def("ppv_critical", &nearfield::ppv_critical, nb::arg("tensile_strength_pa"), nb::arg("p_velocity_m_s"),
+            nb::arg("youngs_modulus_pa"), "T Vp / E in mm/s (Onederra and Esen eq. 11); pass the static E.");
 }
