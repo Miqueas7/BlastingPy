@@ -11,6 +11,7 @@
 #include "blastingpy/airblast.hpp"
 #include "blastingpy/attenuation.hpp"
 #include "blastingpy/criteria_curve.hpp"
+#include "blastingpy/flyrock.hpp"
 #include "blastingpy/least_squares.hpp"
 #include "blastingpy/method_info.hpp"
 #include "blastingpy/units.hpp"
@@ -148,6 +149,32 @@ NB_MODULE(_blastingpy_core, m) {
            "Limit of the curve at frequency_hz (Hz), in the units of the segments; undefined outside the curve.");
     cc.def("intersection_frequency", &intersection_frequency, nb::arg("velocity"), nb::arg("displacement"),
            "Frequency (Hz) where constant velocity and constant displacement meet: velocity / (2 pi displacement).");
+
+    nb::module_ fl = m.def_submodule("_flyrock", "Flyrock: drag-free ballistics and Richards & Moore equations.");
+    fl.attr("standard_gravity") = flyrock::standard_gravity;
+    const double g0 = flyrock::standard_gravity;
+    fl.def("range_level", &flyrock::range_level, nb::arg("velocity_m_s"), nb::arg("launch_angle_deg"),
+           nb::arg("g") = g0, "Range on level ground: v^2 sin(2 theta) / g (angle from the horizontal).");
+    fl.def("max_range_level", &flyrock::max_range_level, nb::arg("velocity_m_s"), nb::arg("g") = g0,
+           "Maximum range on level ground (45 degrees): v^2 / g.");
+    fl.def("range_to_height", &flyrock::range_to_height, nb::arg("velocity_m_s"), nb::arg("launch_angle_deg"),
+           nb::arg("height_m"), nb::arg("g") = g0,
+           "Horizontal range to a point height_m above the launch point (negative = below).");
+    fl.def("max_height", &flyrock::max_height, nb::arg("velocity_m_s"), nb::arg("launch_angle_deg"),
+           nb::arg("g") = g0, "Peak height above the launch point: v^2 sin^2(theta) / (2 g).");
+    fl.def("velocity_for_range", &flyrock::velocity_for_range, nb::arg("range_m"), nb::arg("launch_angle_deg"),
+           nb::arg("g") = g0, "Launch velocity that reaches range_m on level ground.");
+    fl.def("rm_launch_velocity", &flyrock::rm_launch_velocity, nb::arg("k"), nb::arg("charge_kg_m"),
+           nb::arg("confinement_m"), "Richards & Moore face velocity: k (sqrt(m)/B)^1.3.");
+    fl.def("rm_face_burst", &flyrock::rm_face_burst, nb::arg("k"), nb::arg("charge_kg_m"), nb::arg("burden_m"),
+           nb::arg("g") = g0, "Richards & Moore face-burst maximum range (k^2/g)(sqrt(m)/B)^2.6.");
+    fl.def("rm_cratering", &flyrock::rm_cratering, nb::arg("k"), nb::arg("charge_kg_m"), nb::arg("stemming_m"),
+           nb::arg("g") = g0, "Richards & Moore cratering maximum range (k^2/g)(sqrt(m)/SH)^2.6.");
+    fl.def("rm_stemming_ejection", &flyrock::rm_stemming_ejection, nb::arg("k"), nb::arg("charge_kg_m"),
+           nb::arg("stemming_m"), nb::arg("hole_angle_from_vertical_deg"), nb::arg("g") = g0,
+           "Richards & Moore stemming-ejection range: cratering * sin(2 theta); 0 for a vertical hole.");
+    fl.def("rm_min_confinement", &flyrock::rm_min_confinement, nb::arg("k"), nb::arg("charge_kg_m"),
+           nb::arg("range_m"), nb::arg("g") = g0, "Burden or stemming that limits the maximum range to range_m.");
 
     nb::module_ wf = m.def_submodule("_waveform", "Waveform peaks and vector sum.");
     nb::class_<Peak>(wf, "Peak", "Largest |x| (value >= 0) and the index of its first occurrence.")
