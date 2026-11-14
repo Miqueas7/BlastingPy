@@ -35,3 +35,36 @@ def test_domain_angles_and_height():
         fr.range_to_height(10, 45, 100)
     with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter"):
         fr.rm_stemming_ejection(27, 11, 3, 90)
+
+
+def test_lundborg_mckenzie_roth():
+    assert fr.lundborg_max_range(127) == pytest.approx(761, rel=0.005)
+    assert fr.lundborg_optimal_fragment(127) == pytest.approx(0.293, rel=0.005)
+    assert fr.lundborg_range(101.6, 1.35) == pytest.approx(658, rel=0.005)
+    assert fr.mckenzie_max_range(0.596, 127) == pytest.approx(fr.lundborg_max_range(127), rel=0.03)
+    g = fr.roth_gurney_velocity(4273, fr.Explosive.Anfo)
+    assert g == pytest.approx(1880, rel=0.001)
+    cm = fr.roth_charge_mass_ratio(10, 2700, 3)
+    assert fr.roth_launch_velocity(g, cm) == pytest.approx(g * math.sqrt(cm))
+    rock = fr.RothCalibration.Granite
+    assert fr.roth_calibrated_velocity(rock, 5e-4) == pytest.approx(math.sqrt(3.487e6 * 5e-4 - 584), rel=1e-12)
+    assert fr.roth_reference_gurney_velocity(rock) == 2300
+    assert math.isnan(fr.roth_reference_gurney_velocity(fr.RothCalibration.GraniteAllData))
+
+
+def test_lundborg_domain():
+    for bad in (5, 0.127):
+        with pytest.raises(ValueError, match="millimetres"):
+            fr.lundborg_max_range(bad)
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter"):
+        fr.lundborg_range(100, 0.2)
+    with pytest.raises(ValueError, match="minimum c/m"):
+        fr.roth_calibrated_velocity(fr.RothCalibration.Granite, 1e-4)
+
+
+def test_info():
+    ids = {m: fr.info(m) for m in fr.Model.__members__.values()}
+    assert len(ids) == 9
+    assert fr.info(fr.Model.LundborgMaxRange).verification == core.Verification.Secondary
+    assert fr.info(fr.Model.RothCalibrated).method_id == "FLY-ROTH-CAL"
+    assert "version 2018, coefficient 10" in fr.info(fr.Model.McKenzie2018).source

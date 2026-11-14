@@ -15,13 +15,32 @@
  * - Ángulo del taladro de [7c]: se mide desde la vertical aquí; sen 2θ es igual desde la horizontal (inferido).
  *   Con 0° (vertical) la fórmula da 0 (Tabla 4, p. 30).
  *
+ * Lundborg, McKenzie y Roth (FUENTES_SPRINT4.md, «Lundborg», «McKenzie», «Roth (Gurney)»):
+ * - Lundborg [V2], solo por secundarias (Richards y Moore ecs. [1]-[3], p. 22; McKenzie 2018 diaps. 3-4; Szendrei y
+ *   Tose 2022 ecs. [1]-[2], p. 726). L_max = 260·d^(2/3) m, fragmento óptimo 0,1·d^(2/3) m, L = 143·d·(q − 0,2) m, con d
+ *   en PULGADAS en la fuente (aquí mm, se convierte). La condición impresa de L3 («q ≤ 0,2») es errata: q > 0,2 es
+ *   inferido (con q ≤ 0,2 el alcance sería ≤ 0).
+ * - McKenzie, versión 2018 [V1] (diap. 11, «Flyrock Model Summary»): Range_max = 10·SDoB^−2,167·∅^0,667, ∅ en mm. La
+ *   definición de SDoB no está en ninguna fuente leída [NV]: la da el usuario. El 11 y el 9,74 de 2009 son [NV].
+ * - Roth (1979), USBM OFR 77-81 [V1]: ec. (7) y (8) p. 7, ecs. (9) y (10) p. 10; calibradas: ec. (13) granito p. 19,
+ *   (13a) p. 21, (14) dolomita y caliza p. 21, (17) arenisca (cráter) p. 35, todas υ0² = a·(c/m) − b en (m/s)².
+ *   La ec. (13a) es la recta «basada en todos los datos» según la fuente, pero deja fuera los de dos referencias y dos
+ *   puntos de una tercera de la Tabla 2 (la de (13) omite tres puntos); r = 0,971, y no dice a qué √(2E') se normalizó
+ *   (por eso GraniteAllData no tiene velocidad de Gurney de referencia: NaN).
+ * - Las calibradas valen para la velocidad de Gurney con la que se normalizaron (roth_reference_gurney_velocity). La
+ *   fuente no dice cómo escalarlas a otro explosivo (el factor impreso en § 4.1 parece invertido), así que
+ *   roth_calibrated_velocity no recibe explosivo.
+ *
  * Ángulos en grados. Las entradas no admiten NaN ni infinito; los errores son de dominio (ver validation.hpp).
  */
 
 #pragma once
 
 #include <cmath>
+#include <limits>
+#include <string>
 
+#include "blastingpy/method_info.hpp"
 #include "blastingpy/validation.hpp"
 
 namespace blastingpy::flyrock {
@@ -126,6 +145,138 @@ inline double rm_min_confinement(double k, double charge_kg_m, double range_m, d
     validation::require_positive(range_m, "range_m");
     validation::require_positive(g, "g");
     return std::sqrt(charge_kg_m) / std::pow(range_m * g / (k * k), 1.0 / 2.6);
+}
+
+namespace detail {
+inline constexpr double mm_per_in = 25.4;
+/// Diámetro de taladro en pulgadas desde mm (20 a 500); 5 (pulgadas) o 0,127 (metros) por error se rechazan.
+inline double diameter_in(double diameter_mm) {
+    validation::require_finite(diameter_mm, "diameter_mm");
+    validation::require(diameter_mm >= 20.0 && diameter_mm <= 500.0, "diameter_mm",
+                        "must be a hole diameter in millimetres within [20, 500] (inches or metres by mistake?)",
+                        diameter_mm);
+    return diameter_mm / mm_per_in;
+}
+}  // namespace detail
+
+/// Lundborg [V2]: L_max = 260·d_in^(2/3), m.
+inline double lundborg_max_range(double diameter_mm) {
+    return 260.0 * std::pow(detail::diameter_in(diameter_mm), 2.0 / 3.0);
+}
+
+/// Lundborg [V2]: tamaño óptimo de la roca que llega a L_max, 0,1·d_in^(2/3), m.
+inline double lundborg_optimal_fragment(double diameter_mm) {
+    return 0.1 * std::pow(detail::diameter_in(diameter_mm), 2.0 / 3.0);
+}
+
+/// Lundborg [V2]: L = 143·d_in·(q − 0,2), m, con q en kg/m³. q > 0,2 es inferido (la fuente imprime «≤», errata).
+inline double lundborg_range(double diameter_mm, double powder_factor_kg_m3) {
+    const double d_in = detail::diameter_in(diameter_mm);
+    validation::require_finite(powder_factor_kg_m3, "powder_factor_kg_m3");
+    validation::require(powder_factor_kg_m3 > 0.2, "powder_factor_kg_m3", "must be greater than 0.2 kg/m3",
+                        powder_factor_kg_m3);
+    return 143.0 * d_in * (powder_factor_kg_m3 - 0.2);
+}
+
+/// McKenzie 2018 [V1]: 10·SDoB^−2,167·∅^0,667, m; SDoB en m/kg^(1/3) lo da el usuario, ∅ en mm.
+inline double mckenzie_max_range(double sdob_m_kg13, double diameter_mm) {
+    validation::require_positive(sdob_m_kg13, "sdob_m_kg13");
+    detail::diameter_in(diameter_mm);  // solo valida; la fuente usa mm
+    return 10.0 * std::pow(sdob_m_kg13, -2.167) * std::pow(diameter_mm, 0.667);
+}
+
+enum class Explosive { Anfo, Other };
+enum class RothCalibration { Granite, GraniteAllData, DolomiteLimestone, SandstoneCrater };
+
+/// c/m = (W/ℓ)/(ρ·b²·tan(α/2)), Roth ec. (7); α = ángulo de rotura en la cara libre (≈ 90°).
+inline double roth_charge_mass_ratio(double linear_charge_kg_m, double rock_density_kg_m3, double burden_m,
+                                     double breakout_angle_deg = 90.0) {
+    validation::require_positive(linear_charge_kg_m, "linear_charge_kg_m");
+    validation::require_positive(rock_density_kg_m3, "rock_density_kg_m3");
+    validation::require_positive(burden_m, "burden_m");
+    validation::require_finite(breakout_angle_deg, "breakout_angle_deg");
+    validation::require(breakout_angle_deg > 0.0 && breakout_angle_deg < 180.0, "breakout_angle_deg",
+                        "must be within (0, 180)", breakout_angle_deg);
+    return linear_charge_kg_m /
+           (rock_density_kg_m3 * burden_m * burden_m * std::tan(detail::rad(breakout_angle_deg) / 2.0));
+}
+
+/// √(2E') = 0,44·D (ANFO, ec. 9) o D/3 (los demás, ec. 10).
+inline double roth_gurney_velocity(double detonation_velocity_m_s, Explosive explosive) {
+    validation::require_positive(detonation_velocity_m_s, "detonation_velocity_m_s");
+    return explosive == Explosive::Anfo ? 0.44 * detonation_velocity_m_s : detonation_velocity_m_s / 3.0;
+}
+
+/// υ0 = √(2E')·√(c/m), ec. (8).
+inline double roth_launch_velocity(double gurney_velocity_m_s, double charge_mass_ratio) {
+    validation::require_positive(gurney_velocity_m_s, "gurney_velocity_m_s");
+    validation::require_positive(charge_mass_ratio, "charge_mass_ratio");
+    return gurney_velocity_m_s * std::sqrt(charge_mass_ratio);
+}
+
+/// Ecuaciones calibradas υ0² = a·(c/m) − b (ecs. 13, 13a, 14, 17). Error si c/m ≤ b/a (velocidad nula o imaginaria).
+inline double roth_calibrated_velocity(RothCalibration rock, double charge_mass_ratio) {
+    double a = 0.0, b = 0.0;
+    switch (rock) {
+        case RothCalibration::Granite: a = 3.487e6; b = 584.0; break;
+        case RothCalibration::GraniteAllData: a = 3.66e6; b = 518.0; break;
+        case RothCalibration::DolomiteLimestone: a = 3.0e6; b = 200.0; break;
+        case RothCalibration::SandstoneCrater: a = 2.266e6; b = 475.0; break;
+    }
+    validation::require_positive(charge_mass_ratio, "charge_mass_ratio");
+    const double v2 = a * charge_mass_ratio - b;
+    validation::require(v2 > 0.0, "charge_mass_ratio",
+                        "is at or below the minimum c/m of this calibration (" + validation::detail::num(b / a) +
+                            "), where the fitted velocity is zero",
+                        charge_mass_ratio);
+    return std::sqrt(v2);
+}
+
+/// √(2E') con el que se normalizó cada calibración: 2300, NaN (la ec. 13a no lo dice), 1880, 1750 m/s.
+inline double roth_reference_gurney_velocity(RothCalibration rock) {
+    switch (rock) {
+        case RothCalibration::Granite: return 2300.0;
+        case RothCalibration::GraniteAllData: return std::numeric_limits<double>::quiet_NaN();
+        case RothCalibration::DolomiteLimestone: return 1880.0;
+        default: return 1750.0;
+    }
+}
+
+enum class Model {
+    Ballistics, RichardsMooreFaceBurst, RichardsMooreCratering, RichardsMooreStemmingEjection,
+    LundborgMaxRange, LundborgRange, McKenzie2018, RothGurney, RothCalibrated
+};
+
+/// Id, marca y cita de cada modelo. Lundborg es [V2]: cita las secundarias, no los originales.
+inline MethodInfo info(Model model) {
+    const std::string rm = "Richards, A.B. & Moore, A.J., Flyrock Control - By Chance or Design, 30th ISEE Annual "
+                           "Conference, New Orleans (reproduced as Appendix 1 of Moore & Richards 2005), ";
+    const std::string roth = "Roth, J. (1979). A Model for the Determination of Flyrock Range as a Function of Shot "
+                             "Conditions. USBM OFR 77-81, ";
+    const std::string lund = "Lundborg's equations as restated by Richards & Moore (ISEE, eqs. [1]-[3], p. 22), "
+                             "McKenzie (2018) and Szendrei & Tose (2022, JSAIMM 122(12), eqs. [1]-[2], p. 726); "
+                             "originals not read";
+    switch (model) {
+        case Model::Ballistics:
+            return {"FLY-BALLISTIC", Verification::Primary,
+                    roth + "eqs. (1)-(3), (5), pp. 5-6; " + rm + "eqs. [4]-[5], p. 23"};
+        case Model::RichardsMooreFaceBurst: return {"FLY-RM-FACE", Verification::Primary, rm + "eq. [7a], p. 30"};
+        case Model::RichardsMooreCratering: return {"FLY-RM-CRATER", Verification::Primary, rm + "eq. [7b], p. 30"};
+        case Model::RichardsMooreStemmingEjection:
+            return {"FLY-RM-STEMMING", Verification::Primary, rm + "eq. [7c], p. 30"};
+        case Model::LundborgMaxRange: return {"FLY-LUNDBORG-MAX", Verification::Secondary, lund};
+        case Model::LundborgRange: return {"FLY-LUNDBORG-Q", Verification::Secondary, lund + "; q > 0.2 inferred"};
+        case Model::McKenzie2018:
+            return {"FLY-MCKENZIE-2018", Verification::Primary,
+                    "McKenzie, C. (2018), flyrock model summary, slide 11: version 2018, coefficient 10; SDoB "
+                    "supplied by the user (its definition is not in any source read)"};
+        case Model::RothGurney:
+            return {"FLY-ROTH-GURNEY", Verification::Primary, roth + "eqs. (7)-(10), pp. 7 and 10"};
+        default:
+            return {"FLY-ROTH-CAL", Verification::Primary,
+                    roth + "eqs. (13), (13a), (14), (17), pp. 19-35; valid for the Gurney velocity each was "
+                           "normalized with"};
+    }
 }
 
 }  // namespace blastingpy::flyrock

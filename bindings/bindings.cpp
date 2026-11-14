@@ -175,6 +175,51 @@ NB_MODULE(_blastingpy_core, m) {
            "Richards & Moore stemming-ejection range: cratering * sin(2 theta); 0 for a vertical hole.");
     fl.def("rm_min_confinement", &flyrock::rm_min_confinement, nb::arg("k"), nb::arg("charge_kg_m"),
            nb::arg("range_m"), nb::arg("g") = g0, "Burden or stemming that limits the maximum range to range_m.");
+    fl.def("lundborg_max_range", &flyrock::lundborg_max_range, nb::arg("diameter_mm"),
+           "Lundborg maximum range 260 d^(2/3) in m (d in inches in the source; here mm, 20 to 500). Secondary source.");
+    fl.def("lundborg_optimal_fragment", &flyrock::lundborg_optimal_fragment, nb::arg("diameter_mm"),
+           "Lundborg optimal rock size 0.1 d^(2/3) in m (hole diameter in mm, 20 to 500). Secondary source.");
+    fl.def("lundborg_range", &flyrock::lundborg_range, nb::arg("diameter_mm"), nb::arg("powder_factor_kg_m3"),
+           "Lundborg range 143 d (q - 0.2) in m; q must exceed 0.2 kg/m3 (inferred: the printed condition is a typo).");
+    fl.def("mckenzie_max_range", &flyrock::mckenzie_max_range, nb::arg("sdob_m_kg13"), nb::arg("diameter_mm"),
+           "McKenzie (2018) maximum range 10 SDoB^-2.167 d^0.667 in m; SDoB (m/kg^(1/3)) is supplied by the user "
+           "(its definition is not in any source read).");
+    nb::enum_<flyrock::Explosive>(fl, "Explosive", "Explosive family for the Gurney velocity.")
+        .value("Anfo", flyrock::Explosive::Anfo, "sqrt(2E') = 0.44 D")
+        .value("Other", flyrock::Explosive::Other, "sqrt(2E') = D / 3");
+    nb::enum_<flyrock::RothCalibration>(fl, "RothCalibration", "Roth (1979) calibrated velocity equations.")
+        .value("Granite", flyrock::RothCalibration::Granite, "eq. (13): 17 data, normalized to 2300 m/s")
+        .value("GraniteAllData", flyrock::RothCalibration::GraniteAllData,
+               "eq. (13a): the line Roth calls 'based on all data', yet it leaves out the data of two references and "
+               "two points of a third one in his Table 2 (eq. (13) omits three points); r = 0.971; the source does "
+               "not say which Gurney velocity it was normalized to")
+        .value("DolomiteLimestone", flyrock::RothCalibration::DolomiteLimestone,
+               "eq. (14): 'at most an approximation', normalized to 1880 m/s")
+        .value("SandstoneCrater", flyrock::RothCalibration::SandstoneCrater, "eq. (17): normalized to 1750 m/s");
+    fl.def("roth_charge_mass_ratio", &flyrock::roth_charge_mass_ratio, nb::arg("linear_charge_kg_m"),
+           nb::arg("rock_density_kg_m3"), nb::arg("burden_m"), nb::arg("breakout_angle_deg") = 90.0,
+           "Roth eq. (7): c/m = (W/l) / (rho b^2 tan(alpha/2)).");
+    fl.def("roth_gurney_velocity", &flyrock::roth_gurney_velocity, nb::arg("detonation_velocity_m_s"),
+           nb::arg("explosive"), "Roth eqs. (9)-(10): 0.44 D (ANFO) or D / 3.");
+    fl.def("roth_launch_velocity", &flyrock::roth_launch_velocity, nb::arg("gurney_velocity_m_s"),
+           nb::arg("charge_mass_ratio"), "Roth eq. (8): sqrt(2E') sqrt(c/m).");
+    fl.def("roth_calibrated_velocity", &flyrock::roth_calibrated_velocity, nb::arg("rock"),
+           nb::arg("charge_mass_ratio"),
+           "Roth calibrated velocity sqrt(a c/m - b); valid for roth_reference_gurney_velocity(rock). "
+           "Raises if c/m is at or below b/a.");
+    fl.def("roth_reference_gurney_velocity", &flyrock::roth_reference_gurney_velocity, nb::arg("rock"),
+           "Gurney velocity (m/s) each calibration was normalized with; NaN for GraniteAllData (not stated).");
+    nb::enum_<flyrock::Model>(fl, "Model", "Flyrock model, for info().")
+        .value("Ballistics", flyrock::Model::Ballistics)
+        .value("RichardsMooreFaceBurst", flyrock::Model::RichardsMooreFaceBurst)
+        .value("RichardsMooreCratering", flyrock::Model::RichardsMooreCratering)
+        .value("RichardsMooreStemmingEjection", flyrock::Model::RichardsMooreStemmingEjection)
+        .value("LundborgMaxRange", flyrock::Model::LundborgMaxRange)
+        .value("LundborgRange", flyrock::Model::LundborgRange)
+        .value("McKenzie2018", flyrock::Model::McKenzie2018)
+        .value("RothGurney", flyrock::Model::RothGurney)
+        .value("RothCalibrated", flyrock::Model::RothCalibrated);
+    fl.def("info", &flyrock::info, nb::arg("model"), "Method id, verification mark and source of a flyrock model.");
 
     nb::module_ wf = m.def_submodule("_waveform", "Waveform peaks and vector sum.");
     nb::class_<Peak>(wf, "Peak", "Largest |x| (value >= 0) and the index of its first occurrence.")
