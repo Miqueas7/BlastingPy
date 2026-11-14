@@ -101,7 +101,7 @@ def test_predict_published_extrapolation():
     p = airblast.predict_published("USBM-RI8485/coal-parting/0.1Hz", 100 * FT, LB)  # SD 100, rango ~400-1700
     assert any("extrapolation" in w for w in p.warnings)
     inside = airblast.predict_published("USBM-RI8485/coal-highwall/0.1Hz", 100 * FT, LB)
-    assert inside.warnings == []
+    assert not any("extrapolation" in w for w in inside.warnings)
 
 
 def test_predict_published_range_not_published():
@@ -112,7 +112,7 @@ def test_predict_published_range_not_published():
 def test_predict_published_carries_notes():
     p = airblast.predict_published("USBM-RI8485/quarry-opposite-initiation/0.1Hz", 100 * FT, LB)
     assert any("r = 0.050: no predictive value" in w for w in p.warnings)
-    assert not any("safety margin" in w for w in p.warnings)  # mediana: sin el aviso de cota superior
+    assert not any("upper bound equals the median" in w for w in p.warnings)  # mediana: sin el aviso de cota superior
 
 
 def test_to_db_and_from_db():
@@ -208,8 +208,8 @@ def test_catalog_values_are_the_sources():
 def test_range_edges():
     # Fila 1: rango ~10 a ~900 ft/lb^⅓; el borde cuenta como dentro.
     eq = "USBM-RI8485/coal-highwall/0.1Hz"
-    assert airblast.predict_published(eq, 10 * FT, LB).warnings == []
-    assert airblast.predict_published(eq, 900 * FT, LB).warnings == []
+    for edge in (10, 900):
+        assert not any("extrapolation" in w for w in airblast.predict_published(eq, edge * FT, LB).warnings)
     assert any("extrapolation" in w for w in airblast.predict_published(eq, 9.9 * FT, LB).warnings)
 
 
@@ -290,3 +290,43 @@ def test_submodule_is_exposed():
     import blastingpy
 
     assert blastingpy.airblast is airblast
+
+
+# --- Revisión final del sprint 3 ---------------------------------------------------------------------------------
+
+def test_median_warning_with_and_without_se():
+    w = airblast.predict_published("USBM-RI8485/coal-highwall/2Hz", 300.0, 100.0).warnings
+    assert any("median of the published equation" in x and "no safety margin" in x for x in w)
+    assert any("published standard error: 4.9 dB" in x for x in w)
+    w = airblast.predict_published("OSMRE-BLEP/highwall", 300.0, 100.0).warnings
+    assert any("median of the published equation" in x for x in w)
+    assert not any("standard error" in x for x in w)
+
+
+def test_cslow_equation_warns_about_the_quantity():
+    w = airblast.predict_published("USBM-RI8485/coal-parting/c-slow", 300.0, 100.0).warnings
+    assert any("C-weighted slow level" in x for x in w)
+    assert not any("C-weighted slow level" in x
+                   for x in airblast.predict_published("USBM-RI8485/coal-parting/2Hz", 300.0, 100.0).warnings)
+
+
+def test_make_site_law_airblast():
+    law = airblast.make_site_law(20000.0, 1.2, sigma=0.05)
+    assert law.info.method_id == "AIR-CBRT-USER" and law.info.verification == core.Verification.UserDefined
+    assert "8485" in law.info.source and law.sigma == 0.05 and law.z == 2.0
+    assert airblast.predict(law, 400.0, 100.0, Level.Median).value == pytest.approx(
+        20000.0 * (400.0 / 100.0 ** (1 / 3)) ** -1.2)
+    assert airblast.max_charge(law, 400.0, 100.0).value > 0
+
+
+def test_vibration_law_is_refused():
+    from blastingpy import attenuation
+
+    ev = pd.DataFrame({"distance_m": [100.0, 200, 300, 400, 500], "charge_kg": [10.0, 20, 30, 40, 50],
+                       "ppv_mm_s": [20.0, 15, 9, 8, 5]})
+    law = attenuation.fit(ev, "cbrt")
+    for call in (lambda: airblast.predict(law, 300.0, 30.0), lambda: airblast.max_charge(law, 300.0, 5.0),
+                 lambda: airblast.distance_for(law, 30.0, 5.0)):
+        with pytest.raises(ValueError, match=DOMAIN + " 'law'"):
+            call()
+    airblast.predict(airblast.published("OSMRE-BLEP/highwall").law, 300.0, 30.0)  # catalog law is airblast

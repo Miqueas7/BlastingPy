@@ -33,7 +33,7 @@ def test_cfr_approval_notes():
         assert any("only when approved by the regulatory authority" in n.lower()
                    for n in airblast.limit_db(CFR, system=s).notes)
     assert not airblast.limit_db(CFR, system="2Hz").notes
-    assert any("2" in n and "s" in n for n in airblast.limit_db(USBM, system="c-slow").notes)
+    assert any("2 s duration" in n for n in airblast.limit_db(USBM, system="c-slow").notes)
     assert airblast.limit_db(USBM, system="6Hz").wording.startswith("5- or 6-Hz")
 
 
@@ -102,9 +102,9 @@ def test_c_slow_not_comparable():
 
 def test_attrs_and_notes():
     out = airblast.evaluate(_events(10.0), CFR, system="0.1Hz")
-    for k in ("standard", "system", "limit_db", "citation", "verification", "notes"):
+    for k in ("standard", "system", "limit_db", "citation", "verification", "limit_notes"):
         assert k in out.attrs
-    assert any("approved by the regulatory authority" in n for n in out.attrs["notes"])
+    assert any("approved by the regulatory authority" in n for n in out.attrs["limit_notes"])
 
 
 def test_missing_column():
@@ -114,7 +114,9 @@ def test_missing_column():
 
 def test_evaluate_prediction_system_mismatch():
     r = airblast.evaluate_prediction("OSMRE-BLEP/highwall", 300.0, 100.0, CFR, system="2Hz")
-    assert set(r) == {"level_db", "limit_db", "margin_db", "status", "equation_system", "limit_system", "warnings"}
+    assert set(r) == {"level_db", "limit_db", "margin_db", "status", "equation_system", "limit_system", "warnings",
+                      "level", "reason"}
+    assert r["level"] == "median"
     assert r["limit_db"] == 133 and r["margin_db"] == pytest.approx(133 - r["level_db"])
     assert r["equation_system"] is None
     assert any("measuring system" in w for w in r["warnings"])
@@ -135,3 +137,41 @@ def test_evaluate_prediction_5hz_equation_and_cslow():
     r = airblast.evaluate_prediction(eq5, 300.0, 100.0, CFR, system="c-slow")
     assert r["status"] == "not_comparable" and r["margin_db"] is None
     assert any("approved by the regulatory authority" in w for w in r["warnings"])
+
+
+# --- Revisión final del sprint 3 ---------------------------------------------------------------------------------
+
+def test_cutoff_just_above_6hz_is_refused():
+    with pytest.raises(ValueError, match=DOMAIN):
+        airblast.system_from_cutoff(6.0001)
+    assert airblast.system_from_cutoff(6.0) == "6Hz"
+
+
+@pytest.mark.parametrize("eq, std, system, word", [
+    ("USBM-RI8485/coal-parting/c-slow", "OSMRE-30CFR816.67", "2Hz", "C-slow level"),   # c-slow vs lineal
+    ("USBM-RI8485/coal-parting/2Hz", "OSMRE-30CFR816.67", "c-slow", "linear peak"),    # lineal vs c-slow
+    ("OSMRE-BLEP/highwall", "OSMRE-30CFR816.67", "c-slow", "linear peak"),             # sistema None vs c-slow
+    ("USBM-RI8485/coal-parting/c-slow", "OSMRE-30CFR816.67", "c-slow", "psi"),         # ambos c-slow
+])
+def test_cslow_is_never_a_verdict(eq, std, system, word):
+    r = airblast.evaluate_prediction(eq, 300.0, 100.0, std, system=system)
+    assert r["status"] == "not_comparable" and r["margin_db"] is None and word in r["reason"]
+    assert r["level_db"] > 0 and r["limit_db"] == airblast.limit_db(std, system=system).level_db
+
+
+def test_median_is_flagged_in_the_verdict():
+    r = airblast.evaluate_prediction("USBM-RI8485/coal-highwall/2Hz", 300.0, 100.0, USBM, system="2Hz")
+    assert r["status"] == "complies" and r["level"] == "median" and r["reason"] == ""
+    assert any("median of the published equation" in w and "4.9 dB" in w for w in r["warnings"])
+
+
+def test_evaluate_keeps_the_frame_attrs():
+    from blastingpy import datasets, waveform
+
+    ev = waveform.events_from_records([datasets.synthetic_record(seed=1, mic_pa=50.0)], distance_m=[200.0],
+                                      charge_kg=[50.0])
+    ev.attrs["warnings"], ev.attrs["notes"] = ["w0"], ["n0"]
+    ev.attrs["format_evidence"] = "x"
+    out = airblast.evaluate(ev, USBM, system="2Hz")
+    assert out.attrs["warnings"] == ["w0"] and out.attrs["notes"] == ["n0"] and out.attrs["format_evidence"] == "x"
+    assert out.attrs["standard"] == USBM and out.attrs["limit_notes"] == ()

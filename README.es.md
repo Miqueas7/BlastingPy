@@ -116,7 +116,7 @@ Una versión completa y ejecutable con datos sintéticos está en [examples/03-a
   `outliers` y `residuals` se refieren a las filas usadas en el ajuste.
 - **Una campaña solo de airblast** se pasa como un DataFrame con `distance_m`, `charge_kg` y `airblast_pa`.
 - **El sistema de medición es obligatorio.** La librería se niega a comparar con un límite sin él.
-- **Un nivel ponderado C lento no es un pico lineal:** con `system="c-slow"` todo veredicto es `not_comparable`.
+- **Un nivel ponderado C lento no es un pico lineal:** con `system="c-slow"` todo veredicto es `not_comparable`, y también una ecuación publicada C-lento frente a cualquier límite. Una ecuación publicada es una mediana: `predict_published` y `evaluate_prediction` avisan siempre que cerca de la mitad de las voladuras la superan.
 
 | Sistema | USBM RI 8485 (1980) | OSMRE 30 CFR 816.67 |
 |---|---|---|
@@ -137,11 +137,11 @@ al sistema con que se ajustaron. Catorce vienen de la Tabla B-1 de RI 8485, dos 
 | `USBM-RI8485/coal-highwall/{0.1Hz,2Hz,5Hz,c-slow}` | el del nombre | V1 |
 | `USBM-RI8485/coal-parting/{0.1Hz,2Hz,5Hz,c-slow}` | el del nombre | V1 |
 | `USBM-RI8485/metal-mine-highwall/0.1Hz` | 0,1 Hz | V1 |
-| `USBM-RI8485/quarry/0.1Hz`, `quarry-direction-of-initiation`, `quarry-behind-face`, `quarry-opposite-initiation`, `quarry-front-of-face` | 0,1 Hz | V1 |
+| `USBM-RI8485/quarry/0.1Hz`, `USBM-RI8485/quarry-direction-of-initiation/0.1Hz`, `USBM-RI8485/quarry-behind-face/0.1Hz`, `USBM-RI8485/quarry-opposite-initiation/0.1Hz`, `USBM-RI8485/quarry-front-of-face/0.1Hz` | 0,1 Hz | V1 |
 | `OSMRE-BLEP/highwall`, `OSMRE-BLEP/parting` | no se dice | V1 |
 | `AS2187.2-2006/free-face` | no se dice | V2 |
 
-Las dos ecuaciones del BLEP salen de ajustes de 0,1 Hz, pero el BLEP las compara con el límite de 2 Hz;
+Las dos ecuaciones del BLEP salen de ajustes de 0,1 Hz (lo dice RI 8485; el BLEP mismo no dice el sistema), pero el BLEP las compara con el límite de 2 Hz;
 `evaluate_prediction` avisa cuando el sistema de la ecuación difiere del del límite. AS 2187.2 es [V2], de una sola
 fuente secundaria.
 
@@ -155,7 +155,7 @@ No entran: la corrección por viento, los límites de confort australianos y AS 
   en la práctica de BIVDEP de OSMRE. Para la cota unilateral del 95 % usa
   `attenuation.fit(events, z=attenuation.normal_quantile(0.95))` (z = 1,645). `max_charge` y `predict_ppv` usan la cota
   superior por omisión; pasa `attenuation.Level.Median` para la mediana.
-- **Avisos.** Un ajuste con menos de 30 eventos, con `beta <= 0`, o una predicción fuera del rango de distancia o de
+- **Avisos.** Un ajuste de vibración con menos de 30 eventos (el de sobrepresión no avisa por eso), con `beta <= 0`, o una predicción fuera del rango de distancia o de
   carga del ajuste traen avisos (`law.warnings`, `result.warnings`). Una ley con `beta <= 0` no se usa para predecir.
   Una ley con `sigma == 0` o `z == 0` (por ejemplo, `make_site_law` sin `sigma`) tiene la cota superior igual a la
   mediana: sus predicciones con la cota avisan que el resultado no tiene margen de seguridad.

@@ -18,6 +18,8 @@ Conventions
   distance, is outside the range of the data the law was fitted on (extrapolation), and, at ``Level.Upper``, when the
   law has ``sigma == 0`` or ``z == 0`` (``make_site_law`` without ``sigma``): the upper bound is then the median and
   the result has no safety margin.
+* ``make_site_law(..., info=...)`` is meant for catalog laws (``info`` replaces the citation); a hand-made law leaves it
+  out. For an airblast law use :func:`blastingpy.airblast.make_site_law`.
 * A law predicts the PPV quantity it was fitted on (``ppv_kind``); :func:`fit` refuses events that mix kinds.
 """
 

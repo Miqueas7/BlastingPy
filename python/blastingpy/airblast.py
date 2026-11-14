@@ -33,7 +33,7 @@ Law = _core.Law
 Level = _core.Level
 Prediction = _core.Prediction
 
-__all__ = ["to_db", "from_db", "fit", "predict", "max_charge", "distance_for", "PublishedEquation",
+__all__ = ["to_db", "from_db", "fit", "make_site_law", "predict", "max_charge", "distance_for", "PublishedEquation",
            "list_equations", "published", "predict_published", "SiteLaw", "Law", "Level", "Prediction",
            "SYSTEMS", "Limit", "list_standards", "system_from_cutoff", "limit_db", "evaluate", "evaluate_prediction"]
 
@@ -41,6 +41,8 @@ _COLUMNS = ("distance_m", "charge_kg", "airblast_pa")
 _FT_LB = "psi; ft/lb^(1/3)"
 _M_KG = "kPa; m/kg^(1/3)"
 _VERIFICATION = {"V1": Verification.Primary, "V2": Verification.Secondary}
+_TOL = 1e-9  # dB: a level equal to the limit complies
+_USER_ID = "AIR-CBRT-USER"
 
 
 def _vectorized(func, values):
@@ -97,19 +99,40 @@ def fit(events: pd.DataFrame, *, z: float = 2.0, outlier_z: float = 3.0) -> Site
     return _core.fit_site_law(d, w, p[used].tolist(), Law.CubeRoot, z, outlier_z, _core.Quantity.Airblast)
 
 
+def make_site_law(k_pa: float, beta: float, *, sigma: float = 0.0, z: float = 2.0) -> SiteLaw:
+    """Hand-made airblast law ``P = K (D / W**(1/3))**-beta`` (K in Pa-m-kg^(1/3)); user defined, cites RI 8485's form.
+
+    ``sigma`` (log10 scatter) and ``z`` work as in :func:`blastingpy.attenuation.make_site_law`: with ``sigma == 0``
+    the upper bound is the median and predictions at it warn that there is no safety margin.
+    """
+    info = MethodInfo(_USER_ID, Verification.UserDefined,
+                      "User-defined airblast law; form P = K (D / W^(1/3))^-beta of USBM RI 8485 (Table B-1)")
+    return _core.make_site_law(Law.CubeRoot, k_pa, beta, sigma=sigma, z=z, info=info)
+
+
+def _airblast_law(law: SiteLaw) -> SiteLaw:
+    """Refuse a ground-vibration law: its K is in mm/s, not Pa (airblast ids: fit, make_site_law and the catalog)."""
+    mid = getattr(getattr(law, "info", None), "method_id", None)
+    if not (isinstance(mid, str) and (mid.startswith("AIR-") or mid in _catalog())):
+        raise _error("law", f"must be an airblast law (from airblast.fit, airblast.make_site_law or "
+                            f"airblast.published); this one is not. Received method id: {mid!r}")
+    return law
+
+
 def predict(law: SiteLaw, distance_m: float, charge_kg: float, level: Level = Level.Upper) -> Prediction:
     """Peak overpressure (Pa) at ``distance_m`` (m) with ``charge_kg`` (kg per delay)."""
-    return _core.predict_ppv(law, distance_m, charge_kg, level)
+    return _core.predict_ppv(_airblast_law(law), distance_m, charge_kg, level)
 
 
 def max_charge(law: SiteLaw, distance_m: float, limit_pa: float, level: Level = Level.Upper) -> Prediction:
     """Maximum charge per delay (kg) at ``distance_m`` (m) that keeps the overpressure at or below ``limit_pa``."""
-    return _core_call(_core.max_charge, law, distance_m, limit_pa, level, ppv_limit_mm_s="limit_pa")
+    return _core_call(_core.max_charge, _airblast_law(law), distance_m, limit_pa, level, ppv_limit_mm_s="limit_pa")
 
 
 def distance_for(law: SiteLaw, charge_kg: float, limit_pa: float, level: Level = Level.Upper) -> Prediction:
     """Minimum distance (m) at which ``charge_kg`` per delay keeps the overpressure at or below ``limit_pa``."""
-    return _core_call(_core.distance_for_ppv, law, charge_kg, limit_pa, level, ppv_limit_mm_s="limit_pa")
+    return _core_call(_core.distance_for_ppv, _airblast_law(law), charge_kg, limit_pa, level,
+                      ppv_limit_mm_s="limit_pa")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -171,15 +194,22 @@ def published(equation_id: str) -> PublishedEquation:
 
 
 def predict_published(equation_id: str, distance_m: float, charge_kg: float) -> Prediction:
-    """Median peak overpressure (Pa) of a published equation at ``distance_m`` (m) with ``charge_kg`` (kg).
+    """Median overpressure (Pa) of a published equation at ``distance_m`` (m) with ``charge_kg`` (kg).
 
-    ``warnings`` says when D / W^(1/3) is outside the equation's scaled-distance range (approximate, read from a
-    figure), or that the range is not published, and repeats the equation's notes.
+    For a linear system the value is the peak overpressure; for the ``c-slow`` equations it is the source's C-slow
+    level expressed as a pressure (the source prints them in psi), not a linear peak. ``warnings`` always says that
+    this is a median (about half of the blasts exceed it; with the published standard error when there is one) and,
+    for a C-slow equation, what the value is; it says when D / W^(1/3) is outside the equation's scaled-distance
+    range (approximate, read from a figure), or that the range is not published, and repeats the equation's notes.
     """
     eq = published(equation_id)
     p = _core.predict_ppv(eq.law, distance_m, charge_kg, Level.Median)
     sd = distance_m / charge_kg ** (1 / 3)
     out = list(p.warnings)
+    se = f" (published standard error: {eq.se_db:g} dB)" if eq.se_db is not None else ""
+    out.append(f"median of the published equation: about half of the blasts exceed it; no safety margin{se}")
+    if eq.system == _SLOW:
+        out.append("this equation predicts a C-weighted slow level, expressed as a pressure; it is not a linear peak")
     if eq.scaled_distance_range_si is None:
         out.append("scaled-distance range not published for this equation: extrapolation cannot be checked")
     else:
@@ -194,6 +224,7 @@ def predict_published(equation_id: str, distance_m: float, charge_kg: float) -> 
 
 SYSTEMS = ("0.1Hz", "2Hz", "6Hz", "c-slow")
 _LINEAR = SYSTEMS[:3]
+_SLOW = SYSTEMS[3]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -231,9 +262,12 @@ def list_standards() -> list[str]:
     return list(dict.fromkeys(std for std, _ in _limits()))
 
 
+def _five_to_six(system):
+    return "6Hz" if system == "5Hz" else system  # RI 8485: "5- or 6-Hz"; CFR: "6 Hz or lower"
+
+
 def _system(system) -> str:
-    if system == "5Hz":  # RI 8485: "5- or 6-Hz"; CFR: "6 Hz or lower"
-        return "6Hz"
+    system = _five_to_six(system)
     if not isinstance(system, str) or system not in SYSTEMS:
         raise _error("system", f"is required (the measuring system of the microphone) and must be one of "
                                f"{list(SYSTEMS)}. Received: {system!r}")
@@ -272,7 +306,8 @@ def evaluate(events: pd.DataFrame, standard: str, *, system: str) -> pd.DataFram
     Returns a copy of ``events`` plus ``airblast_db``, ``limit_db``, ``margin_db`` (limit - measured), ``status``
     (``complies``, ``exceeds``, ``indeterminate`` or ``not_comparable``) and ``reason``. A missing, non-finite or
     <= 0 pressure is ``indeterminate``; with ``system="c-slow"`` every row is ``not_comparable`` (a linear peak is
-    not a C-slow level). ``attrs`` names the standard, system, limit, citation, verification and notes.
+    not a C-slow level). ``attrs`` keeps the frame's own (``warnings``, ``notes``, ``format_evidence``) and adds the
+    standard, system, limit, citation, verification and the limit's notes (``limit_notes``).
     """
     lim = limit_db(standard, system=system)
     if "airblast_pa" not in events.columns:
@@ -285,7 +320,7 @@ def evaluate(events: pd.DataFrame, standard: str, *, system: str) -> pd.DataFram
     out["airblast_db"] = db
     out["limit_db"] = lim.level_db
     out["margin_db"] = lim.level_db - db
-    status = np.where(db > lim.level_db + 1e-9, "exceeds", "complies").astype(object)
+    status = np.where(db > lim.level_db + _TOL, "exceeds", "complies").astype(object)
     reason = np.full(p.shape, "", dtype=object)
     status[~ok] = "indeterminate"
     reason[~ok] = "airblast_pa is missing, not finite or <= 0"
@@ -294,31 +329,44 @@ def evaluate(events: pd.DataFrame, standard: str, *, system: str) -> pd.DataFram
         reason[:] = "a linear peak pressure is not a C-slow level: it cannot be compared with this limit"
         out["margin_db"] = np.nan
     out["status"], out["reason"] = status, reason
-    out.attrs = {"standard": lim.standard, "system": lim.system, "limit_db": lim.level_db, "citation": lim.citation,
-                 "verification": lim.verification, "notes": lim.notes}
+    out.attrs.update({"standard": lim.standard, "system": lim.system, "limit_db": lim.level_db,
+                      "citation": lim.citation, "verification": lim.verification, "limit_notes": lim.notes})
     return out
 
 
 def evaluate_prediction(equation_id: str, distance_m: float, charge_kg: float, standard: str, *, system: str) -> dict:
     """Median level of a published equation at ``distance_m`` / ``charge_kg`` against the limit of ``system``.
 
-    Returns ``level_db``, ``limit_db``, ``margin_db``, ``status``, ``equation_system``, ``limit_system`` and
-    ``warnings`` (the prediction's, the limit's notes, and one when the equation's measuring system differs from the
-    limit's or is not stated). With ``system="c-slow"`` the status is ``not_comparable`` and the margin None.
+    Returns ``level_db``, ``limit_db``, ``margin_db``, ``status``, ``equation_system``, ``limit_system``, ``level``
+    (always ``"median"``), ``reason`` and ``warnings`` (the prediction's, which says it is a median, the limit's notes,
+    and one when the equation's measuring system differs from the limit's or is not stated). The status is
+    ``not_comparable`` (margin None, ``reason`` says why) when exactly one of the equation and the limit is C-slow,
+    when the equation's system is not stated and the limit is C-slow, and when both are: the source prints the C-slow
+    equations in psi without saying how that pressure maps to the dBC level of the limit. ``level_db`` is then
+    20 log10(P / P0) of the predicted value, for the user to judge.
     """
     lim = limit_db(standard, system=system)
     pred = predict_published(equation_id, distance_m, charge_kg)
-    eq_sys = published(equation_id).system
-    eq_sys = "6Hz" if eq_sys == "5Hz" else eq_sys
+    eq_sys = _five_to_six(published(equation_id).system)
     level = float(to_db(pred.value))
     warns = list(pred.warnings) + list(lim.notes)
     if eq_sys != lim.system:
         warns.append(f"the equation's measuring system ({eq_sys or 'not stated by the source'}) differs from the "
                      f"limit's ({lim.system}): the comparison mixes measuring systems")
-    if lim.pressure_pa is None:
+    eq_slow, lim_slow = eq_sys == _SLOW, lim.system == _SLOW
+    reason = ""
+    if eq_slow and lim_slow:
+        reason = ("the source prints the C-slow equations in psi and does not say how that pressure maps to the dBC "
+                  "level of the limit")
+    elif eq_slow:
+        reason = "the equation predicts a C-slow level and the limit is a linear peak: different quantities"
+    elif lim_slow:
+        reason = "the equation predicts a linear peak (or its system is not stated) and the limit is a C-slow level"
+    if reason:
         status, margin = "not_comparable", None
     else:
         margin = lim.level_db - level
-        status = "exceeds" if level > lim.level_db + 1e-9 else "complies"
+        status = "exceeds" if level > lim.level_db + _TOL else "complies"
     return {"level_db": level, "limit_db": lim.level_db, "margin_db": margin, "status": status,
-            "equation_system": eq_sys, "limit_system": lim.system, "warnings": warns}
+            "equation_system": eq_sys, "limit_system": lim.system, "warnings": warns, "level": "median",
+            "reason": reason}

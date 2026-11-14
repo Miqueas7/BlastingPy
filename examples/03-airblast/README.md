@@ -18,7 +18,7 @@ library refuses to compare against a limit without it.
 |---|---|---|
 | 1 | `datasets.synthetic_record(mic_pa=...)` | One record per blast; the microphone peak follows the invented law. |
 | 2 | `waveform.events_from_records` | One events row per record, with `airblast_pa` and `airblast_freq_hz` from the microphone. |
-| 3 | `airblast.fit` | Site law on `airblast_pa` (cube root); upper bound K 10^(z sigma). Eight events fit but warn (fewer than 30). |
+| 3 | `airblast.fit` | Site law on `airblast_pa` (cube root); upper bound K 10^(z sigma). The airblast fit emits no fewer-than-30 warning. |
 | 4 | `airblast.predict`, `airblast.max_charge` | Upper-bound pressure and maximum charge per delay at a receiver 400 m away. |
 | 5 | `airblast.evaluate(..., system="2Hz")` | A verdict per event against `OSMRE-30CFR816.67` (133 dB for 2 Hz). |
-| 6 | `airblast.evaluate_prediction` | A published median (`USBM-RI8485/quarry/0.1Hz`) against the same limit; it warns that its measuring system (0.1 Hz) differs from the limit's. |
+| 6 | `airblast.evaluate_prediction` | A published median (`USBM-RI8485/quarry/0.1Hz`) against the same limit; it warns that it is a median (no safety margin) and that its measuring system (0.1 Hz) differs from the limit's. |

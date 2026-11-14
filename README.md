@@ -113,7 +113,7 @@ A complete, runnable version with synthetic data is in [examples/03-airblast](ex
   refer to the rows used in the fit.
 - **An airblast-only campaign** is passed as a DataFrame with `distance_m`, `charge_kg` and `airblast_pa`.
 - **The measuring system is required.** The library refuses to compare against a limit without it.
-- **A C-weighted slow level is not a linear peak:** with `system="c-slow"` every verdict is `not_comparable`.
+- **A C-weighted slow level is not a linear peak:** with `system="c-slow"` every verdict is `not_comparable`, and so is a C-slow published equation against any limit. A published equation is a median: `predict_published` and `evaluate_prediction` always warn that about half of the blasts exceed it.
 
 | System | USBM RI 8485 (1980) | OSMRE 30 CFR 816.67 |
 |---|---|---|
@@ -134,11 +134,11 @@ the system they were fitted with. Fourteen come from RI 8485 Table B-1, two from
 | `USBM-RI8485/coal-highwall/{0.1Hz,2Hz,5Hz,c-slow}` | as named | V1 |
 | `USBM-RI8485/coal-parting/{0.1Hz,2Hz,5Hz,c-slow}` | as named | V1 |
 | `USBM-RI8485/metal-mine-highwall/0.1Hz` | 0.1 Hz | V1 |
-| `USBM-RI8485/quarry/0.1Hz`, `quarry-direction-of-initiation`, `quarry-behind-face`, `quarry-opposite-initiation`, `quarry-front-of-face` | 0.1 Hz | V1 |
+| `USBM-RI8485/quarry/0.1Hz`, `USBM-RI8485/quarry-direction-of-initiation/0.1Hz`, `USBM-RI8485/quarry-behind-face/0.1Hz`, `USBM-RI8485/quarry-opposite-initiation/0.1Hz`, `USBM-RI8485/quarry-front-of-face/0.1Hz` | 0.1 Hz | V1 |
 | `OSMRE-BLEP/highwall`, `OSMRE-BLEP/parting` | not stated | V1 |
 | `AS2187.2-2006/free-face` | not stated | V2 |
 
-BLEP's two equations come from 0.1 Hz fits, but BLEP compares them with the 2 Hz limit; `evaluate_prediction` warns when
+BLEP's two equations come from 0.1 Hz fits (RI 8485 states that fit; BLEP itself does not state a system), but BLEP compares them with the 2 Hz limit; `evaluate_prediction` warns when
 the equation's system differs from the limit's. AS 2187.2 is [V2], from a single secondary source.
 
 Not included: wind correction, the Australian comfort limits and AS 2187.2 from the standard itself.
@@ -151,7 +151,7 @@ Not included: wind correction, the Australian comfort limits and AS 2187.2 from 
   BIVDEP practice. For a one-sided 95 % bound use `attenuation.fit(events, z=attenuation.normal_quantile(0.95))`
   (z = 1.645). `max_charge` and `predict_ppv` use the upper bound by default; pass `attenuation.Level.Median` for
   the median.
-- **Warnings.** Fits with fewer than 30 events, `beta <= 0` and predictions outside the fitted range of distance or
+- **Warnings.** Ground-vibration fits with fewer than 30 events (the airblast fit does not warn about it), `beta <= 0` and predictions outside the fitted range of distance or
   charge come with warnings (`law.warnings`, `result.warnings`). A law with `beta <= 0` is refused for predictions.
   A law with `sigma == 0` or `z == 0` (for example `make_site_law` without `sigma`) has an upper bound equal to the
   median: its predictions at the upper bound warn that the result has no safety margin.
