@@ -21,13 +21,6 @@ std::vector<double> grid(double t0, double t1, double dt) {
     return t;
 }
 
-double vector_peak(const nf::Waveform& w) {
-    double best = 0.0;
-    for (std::size_t i = 0; i < w.radial_mm_s.size(); ++i)
-        best = std::max(best, std::hypot(w.radial_mm_s[i], w.axial_mm_s[i]));
-    return best;
-}
-
 double abs_peak(const std::vector<double>& x) {
     double best = 0.0;
     for (double v : x) best = std::max(best, std::fabs(v));
@@ -93,7 +86,7 @@ TEST(NearfieldHeelan, PeakAtThreeQuarterPi) {  // HE4: phi = 3pi/4 (z = r), pico
     ASSERT_GT(g * R * (1 / vs - 1 / vp), 20.0);  // P y SV no se solapan
     const auto w = nf::heelan_element(kSource, kRock, kA, kL, r, r, grid(0.0, R / vs + 30 / g, 0.002 / g));
     const double want = nf::heelan_amplitude(kSource, kRock, kA, kL) * 15.528 * std::sqrt(3.0) * kA / r;
-    expect_rel(vector_peak(w), want, 1e-2);
+    expect_rel(nf::vector_peak(w), want, 1e-2);
 }
 
 TEST(NearfieldHeelan, SymmetryAboutTheElement) {
@@ -146,8 +139,8 @@ TEST(NearfieldHeelan, Dimensional) {
         EXPECT_NEAR(far.radial_mm_s[i], 0.5 * near.radial_mm_s[i], 1e-9 * abs_peak(near.radial_mm_s));
     // y con phi = 3pi/4 el pico del vector también cae a la mitad
     const auto t2 = grid(0.0, 0.02, 1e-7);
-    expect_rel(vector_peak(nf::heelan_element(kSource, kRock, kA, kL, 2 * r, 2 * r, t2)),
-               0.5 * vector_peak(nf::heelan_element(kSource, kRock, kA, kL, r, r, t2)), 1e-3);
+    expect_rel(nf::vector_peak(nf::heelan_element(kSource, kRock, kA, kL, 2 * r, 2 * r, t2)),
+               0.5 * nf::vector_peak(nf::heelan_element(kSource, kRock, kA, kL, r, r, t2)), 1e-3);
 }
 
 TEST(NearfieldHeelan, Domain) {

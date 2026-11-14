@@ -36,6 +36,19 @@
  * - Validez (Blair 2007, pp. E37–E40) [V1], no se impone: Ω_A ≲ 0,1; P y SV se desacoplan con Ω_A·r/a ≳ 5; L/a ≲ 2.
  *   La suma de P y SV donde se solapan en el tiempo es cuestionable (p. E37).
  *
+ * Columna de Heelan (FUENTES_SPRINT5.md, «Heelan escalado y superposición no lineal»; Blair 2008):
+ * - La columna se parte en M elementos iguales (M impar, típicamente 41; resultados independientes de M si M ≳ 21,
+ *   p. 237) [V1]. Cada elemento es el de Heelan estándar con su presión multiplicada por E_m·w_e^(−A) (p. 237) [V1].
+ *   NO es el «Heelan escalado» de Blair y Minchinton (2006): sus ecuaciones y γ_n son [NV] y no entran.
+ * - column_weights: E_m = (m·w_e)^A − ((m − 1)·w_e)^A (ec. 1, cebado en el fondo), suma (M·w_e)^A (ec. 2); cebado en
+ *   el elemento M1 (ec. 22, p. 245, Fig. 15): el cebo pesa 1, los pares simétricos j = 2…M1 pesan
+ *   [(2j − 1)^A − (2j − 3)^A]/2 cada uno, y los sueltos j = M1 + 1 … M − M1 + 1 (hacia el tope, posición M1 + j − 1)
+ *   pesan (j + M1 − 1)^A − (j + M1 − 2)^A [V1]. Reflejar la columna cuando el cebo está más cerca del tope es inferido.
+ *   A en (0, 1]: A > 1 no tiene sentido físico (p. 240) [V1].
+ * - heelan_column: el elemento m inicia en |z_m − z_cebo|/VOD, con z_cebo el centro del elemento del cebo (inferido de
+ *   la descripción, la fuente no da la fórmula); las componentes (radial, axial) se suman directamente.
+ * - vector_peak: máx √(radial² + axial²) de la onda; el pico se toma siempre de la onda, nunca de G_n.
+ *
  * Las entradas no admiten NaN ni infinito; los errores son de dominio (ver validation.hpp).
  */
 
@@ -352,6 +365,77 @@ inline Waveform heelan_element(const PressureSource& source, const Medium& mediu
         w.axial_mm_s[i] = -vr * cos_phi + vphi * sin_phi;
     }
     return w;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Columna de Heelan con velocidad de detonación y superposición no lineal (Blair 2008)
+
+/// Columna cargada entre z_bottom y z_top (m), en `elements` tramos iguales; primer_element = M1 contado desde el fondo.
+struct Column {
+    double hole_radius_m;
+    double z_bottom;
+    double z_top;
+    int elements;
+    int primer_element;
+    double vod_m_s;
+    double charge_exponent;
+};
+
+/// E_m·w_e^(−A) de cada elemento en orden espacial (índice 0 = fondo). Ecs. 1–2 (M1 = 1) y 22 (cualquier M1).
+inline std::vector<double> column_weights(int elements, int primer_element, double charge_exponent) {
+    validation::require(elements >= 1 && elements % 2 == 1, "elements", "must be an odd integer >= 1", elements);
+    validation::require_in_range(primer_element, 1, elements, "primer_element");
+    validation::require_finite(charge_exponent, "charge_exponent");
+    validation::require(charge_exponent > 0.0 && charge_exponent <= 1.0, "charge_exponent",
+                        "must be within (0, 1] (A > 1 has no physical meaning, Blair 2008 p. 240)", charge_exponent);
+    const int M = elements;
+    const bool mirror = primer_element > (M + 1) / 2;  // cebo más cerca del tope: se calcula reflejado (inferido)
+    const int m1 = mirror ? M + 1 - primer_element : primer_element;
+    auto p = [charge_exponent](int k) { return std::pow(static_cast<double>(k), charge_exponent); };
+    std::vector<double> w(M);
+    w[m1 - 1] = 1.0;
+    for (int j = 2; j <= m1; ++j) w[m1 - j] = w[m1 + j - 2] = 0.5 * (p(2 * j - 1) - p(2 * j - 3));
+    for (int j = m1 + 1; j <= M - m1 + 1; ++j) w[m1 + j - 2] = p(j + m1 - 1) - p(j + m1 - 2);
+    if (mirror) std::reverse(w.begin(), w.end());
+    return w;
+}
+
+/// Pico vectorial: máx √(radial² + axial²) en mm/s (0 si la onda está vacía).
+inline double vector_peak(const Waveform& waveform) {
+    validation::require(waveform.radial_mm_s.size() == waveform.axial_mm_s.size(), "waveform",
+                        "must have radial and axial components of the same length",
+                        static_cast<double>(waveform.axial_mm_s.size()));
+    double best = 0.0;
+    for (std::size_t i = 0; i < waveform.radial_mm_s.size(); ++i)
+        best = std::max(best, std::hypot(waveform.radial_mm_s[i], waveform.axial_mm_s[i]));
+    return best;
+}
+
+/// Velocidad (mm/s) de la columna en (r, z): suma de elementos de Heelan iniciados a la VOD desde el cebo, cada uno
+/// con su peso de column_weights.
+inline Waveform heelan_column(const PressureSource& source, const Medium& medium, const Column& column, double r,
+                              double z, const std::vector<double>& t_s) {
+    validation::require_positive(column.hole_radius_m, "hole_radius_m");
+    validation::require_finite(column.z_bottom, "z_bottom");
+    validation::require_finite(column.z_top, "z_top");
+    validation::require(column.z_top > column.z_bottom, "z_top", "must be greater than z_bottom", column.z_top);
+    validation::require_positive(column.vod_m_s, "vod_m_s");
+    const auto weights = column_weights(column.elements, column.primer_element, column.charge_exponent);
+    const double half = (column.z_top - column.z_bottom) / (2.0 * column.elements);
+    auto centre = [&](int m) { return column.z_bottom + (2.0 * m + 1.0) * half; };  // m desde 0 (fondo)
+    const double z_primer = centre(column.primer_element - 1);
+    Waveform total{std::vector<double>(t_s.size(), 0.0), std::vector<double>(t_s.size(), 0.0)};
+    std::vector<double> shifted(t_s.size());
+    for (int m = 0; m < column.elements; ++m) {
+        const double delay = std::fabs(centre(m) - z_primer) / column.vod_m_s;
+        for (std::size_t i = 0; i < t_s.size(); ++i) shifted[i] = t_s[i] - delay;
+        const auto w = heelan_element(source, medium, column.hole_radius_m, half, r, z - centre(m), shifted);
+        for (std::size_t i = 0; i < t_s.size(); ++i) {
+            total.radial_mm_s[i] += weights[m] * w.radial_mm_s[i];
+            total.axial_mm_s[i] += weights[m] * w.axial_mm_s[i];
+        }
+    }
+    return total;
 }
 
 }  // namespace blastingpy::nearfield

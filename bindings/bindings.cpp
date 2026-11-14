@@ -325,4 +325,29 @@ NB_MODULE(_blastingpy_core, m) {
             "Velocity (mm/s) radiated by a short charge element centred at the origin (Heelan 1953 with the Blair "
             "2007 source): P along R from R / Vp, SV perpendicular from R / Vs; phi = arccos(-z / R). "
             "`hole_radius_m` is the hole radius (Blair); Heelan defines it as the equivalent cavity radius.");
+
+    nb::class_<nearfield::Column>(
+        nfd, "Column",
+        "Charge column between z_bottom and z_top (m), split into `elements` equal elements (odd); the primer is "
+        "element `primer_element` counted from the bottom (1 = bottom priming); VOD in m/s; charge exponent A in (0, 1].")
+        .def(nb::init<double, double, double, int, int, double, double>(), nb::arg("hole_radius_m"),
+             nb::arg("z_bottom"), nb::arg("z_top"), nb::arg("elements"), nb::arg("primer_element"), nb::arg("vod_m_s"),
+             nb::arg("charge_exponent"))
+        .def_ro("hole_radius_m", &nearfield::Column::hole_radius_m)
+        .def_ro("z_bottom", &nearfield::Column::z_bottom)
+        .def_ro("z_top", &nearfield::Column::z_top)
+        .def_ro("elements", &nearfield::Column::elements)
+        .def_ro("primer_element", &nearfield::Column::primer_element)
+        .def_ro("vod_m_s", &nearfield::Column::vod_m_s)
+        .def_ro("charge_exponent", &nearfield::Column::charge_exponent);
+    nfd.def("column_weights", &nearfield::column_weights, nb::arg("elements"), nb::arg("primer_element"),
+            nb::arg("charge_exponent"),
+            "Blair (2008) non-linear superposition weights E_m w_e^(-A), bottom element first (eqs. 1-2 and 22); "
+            "they sum to elements^A; A = 1 gives all ones.");
+    nfd.def("heelan_column", &nearfield::heelan_column, nb::arg("source"), nb::arg("medium"), nb::arg("column"),
+            nb::arg("r"), nb::arg("z"), nb::arg("t_s"),
+            "Velocity (mm/s) of a charge column: Heelan elements initiated from the primer at the VOD, each scaled by "
+            "its Blair (2008) weight. Not the Blair and Minchinton (2006) scaled Heelan model.");
+    nfd.def("vector_peak", &nearfield::vector_peak, nb::arg("waveform"),
+            "Peak vector velocity max sqrt(radial^2 + axial^2) of a waveform (mm/s).");
 }

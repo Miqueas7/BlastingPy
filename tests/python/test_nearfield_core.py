@@ -59,6 +59,36 @@ def test_heelan_element_from_python():
     assert nf.scaled_frequency(source, rock, a) > 0
 
 
+def test_column_weights_bn2():
+    w = nf.column_weights(elements=15, primer_element=5, charge_exponent=0.7)
+    assert sum(w) == pytest.approx(15**0.7, rel=1e-12)
+    assert w[4] == 1.0
+    assert w[9] == pytest.approx(10**0.7 - 9**0.7, rel=1e-12)
+    assert nf.column_weights(15, 11, 0.7) == pytest.approx(w[::-1], rel=1e-15)
+
+
+def test_heelan_column_from_python():
+    rock = nf.Medium(3000 * math.sqrt(3), 3000, 2700)
+    source = nf.PressureSource(5e9, 6, 20000)
+    col = nf.Column(hole_radius_m=0.05, z_bottom=-0.1, z_top=0.1, elements=1, primer_element=1, vod_m_s=5000,
+                    charge_exponent=0.7)
+    assert (col.elements, col.vod_m_s) == (1, 5000)
+    t = np.arange(0.0, 0.006, 1e-6)
+    c = nf.heelan_column(source, rock, col, r=7.0, z=3.0, t_s=t)
+    e = nf.heelan_element(source, rock, 0.05, 0.1, 7.0, 3.0, t)
+    assert c.radial_mm_s == pytest.approx(e.radial_mm_s, rel=1e-12)
+    assert c.axial_mm_s == pytest.approx(e.axial_mm_s, rel=1e-12)
+    want = np.max(np.hypot(c.radial_mm_s, c.axial_mm_s))
+    assert nf.vector_peak(c) == pytest.approx(want, rel=1e-15)
+
+
+def test_column_domain():
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter 'elements'"):
+        nf.column_weights(14, 1, 0.7)
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter 'charge_exponent'"):
+        nf.column_weights(15, 1, 1.5)
+
+
 def test_heelan_domain():
     rock = nf.Medium(5000, 3000, 2700)
     with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter"):
