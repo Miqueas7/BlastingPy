@@ -229,3 +229,24 @@ def test_import_without_matplotlib():
             "print('ok')")
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert r.stdout.strip() == "ok", r.stderr
+
+
+def test_plot_record_one_axes_per_channel_in_order_and_labels():
+    from blastingpy.datasets import synthetic_record
+    from blastingpy.plotting import plot_record
+    rec = synthetic_record(mic_pa=50.0)
+    fig = plot_record(rec)
+    assert len(fig.axes) == 4
+    assert [a.get_title() for a in fig.axes] == ["transverse", "vertical", "longitudinal", "mic"]
+    assert [a.get_ylabel() for a in fig.axes] == ["Velocity (mm/s)"] * 3 + ["Pressure (Pa)"]
+    assert fig.axes[-1].get_xlabel() == "Time (s)"
+    assert fig.axes[0].get_shared_x_axes().joined(fig.axes[0], fig.axes[3])
+    assert len(fig.axes[0].lines) >= 2  # trazo y marca del pico
+
+
+def test_plot_record_without_mic_and_into_given_figure():
+    from blastingpy.datasets import synthetic_record
+    from blastingpy.plotting import plot_record
+    fig = plt.figure()
+    out = plot_record(synthetic_record(mic_pa=None), fig=fig)
+    assert out is fig and len(fig.axes) == 3

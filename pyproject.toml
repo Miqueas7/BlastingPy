@@ -39,6 +39,7 @@ Issues = "https://github.com/Miqueas7/BlastingPy/issues"
 test = ["pytest>=7.0", "hypothesis>=6.0"]
 io = ["openpyxl>=3.1"]
 viz = ["matplotlib>=3.8"]
+seismic = ["obspy>=1.4"]
 
 [tool.scikit-build]
 # PyPI muestra la descripción en inglés y, debajo, la española

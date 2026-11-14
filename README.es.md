@@ -8,8 +8,8 @@ El caso de uso central: al terminar una campaña de monitoreo, el ingeniero de v
 carga máxima por retardo y verifica el resultado contra un criterio normativo, indicando la edición, la tabla, la
 magnitud y el método de frecuencia que usó.
 
-**Estado:** en desarrollo, sin publicar (versión 0.1.0). El sprint 1 de 5 está completo: tabla de eventos, ley de
-atenuación, carga máxima y veredicto de cumplimiento. El paquete no está en PyPI y el repositorio es privado.
+**Estado:** en desarrollo, sin publicar (versión 0.1.0). Los sprints 1 y 2 de 5 están completos: tabla de eventos, ley de
+atenuación, carga máxima y veredicto de cumplimiento, y lectura de registros del sismógrafo (forma de onda, PPV, suma vectorial, frecuencia). El paquete no está en PyPI y el repositorio es privado.
 
 ## Instalación (desde el repositorio)
 
@@ -19,7 +19,7 @@ python -m pytest tests/python -q
 ```
 
 Para compilar desde el código fuente hacen falta un compilador de C++ y CMake. Extras: `io` (leer y escribir `.xlsx`),
-`viz` (gráficos).
+`viz` (gráficos), `seismic` (lectores de ObsPy).
 
 ## Ejemplo
 
@@ -41,6 +41,53 @@ plotting.plot_compliance(events, "USBM-RI8507-1980", "appendix-b-drywall")
 
 `write_events_template("events.csv")` escribe la tabla en blanco. Hay una versión completa y ejecutable con datos
 sintéticos en [examples/01-site-law-and-compliance](examples/01-site-law-and-compliance/) (su README está en inglés).
+
+## Desde un registro del sismógrafo
+
+`blastingpy.io` lee la forma de onda que exporta un sismógrafo; `blastingpy.waveform` la convierte en picos, suma
+vectorial y frecuencia, y en una fila de la tabla de eventos de las secciones anteriores. Los datos y su evidencia están
+en [docs/investigacion/FUENTES_SPRINT2.md](docs/investigacion/FUENTES_SPRINT2.md).
+
+```python
+from blastingpy import attenuation, criteria, io, waveform
+
+records = [io.read_instantel_ascii(p, sample_rate_hz=1024, pretrigger_s=0.25) for p in paths]
+events = waveform.events_from_records(records, distance_m=[100, 150, 200], charge_kg=[20, 50, 30])
+law = attenuation.fit(events, law="sqrt")
+verdict = criteria.evaluate(events, "USBM-RI8507-1980", "appendix-b-drywall")
+```
+
+Una versión completa y ejecutable con datos sintéticos está en [examples/02-waveform-to-events](examples/02-waveform-to-events/).
+
+| Lector | `format_evidence` | Notas |
+|---|---|---|
+| `read_instantel_ascii`, mínimo (`Tran Vert Long MicL` y filas) | `real-file` | Sin metadatos: pasa `sample_rate_hz` (y `pretrigger_s`). |
+| `read_instantel_ascii`, THOR | `third-party-parser` | **No validado contra un archivo real**: construido desde la descripción de un lector de terceros. |
+| `read_instantel_ascii`, Blastware con encabezado (tabla o bloques) | `manual-only` | **No validado contra un archivo real**: construido desde el manual; el registro lleva un aviso. Solo los separadores por omisión: encabezado entre comillas dobles y valores de los bloques separados por comas. Las unidades del encabezado son una pista: manda `units=`, con un aviso. |
+| `read_instantel_histogram` | `manual-only` | **No validado contra un archivo real**: construido desde el manual; devuelve un DataFrame con un aviso en `attrs`. |
+| `read_waveform_csv` | `user` | Cualquier marca o canales renombrados (`columns=`, `units=`, `sep="\t"`); acepta notación científica. |
+| `read_obspy` (extra `seismic`) | `user` | miniSEED, SAC y otros formatos que lee ObsPy. |
+
+Un export real de cada formato no validado lo resolvería. Mientras tanto, contrasta el primer registro que leas con lo
+que muestra el software de tu sismógrafo.
+
+- **La frecuencia de muestreo nunca se adivina.** Si el archivo no la trae y no pasas `sample_rate_hz`, el lector da
+  error. `read_waveform_csv` con columna de tiempo ajusta la frecuencia por mínimos cuadrados y rechaza una columna no
+  uniforme.
+- **Unidades.** Por dentro todo es SI (mm/s, Pa, s). Las unidades se infieren de la resolución solo para los escalones
+  del Micromate y el Minimate Pro (0,00788 mm/s, 0,0156 Pa), con un aviso; en otro caso pasa `units=`.
+- **Canales renombrados:** los lectores de Instantel no los reconocen; usa
+  `read_waveform_csv(..., columns=..., units=..., sep="\t")` (ahí `units=` es obligatorio).
+- **Frecuencia por cruce por cero.** `analyze(zc_method="interpolated")` (por omisión) interpola los cruces;
+  `"instantel"` cuenta muestras enteras y marca una frecuencia sobre 100 fs / 1024 Hz. La frecuencia es NaN cuando el
+  borde del registro corta el medio ciclo del pico o, con `"instantel"`, sobre ese tope. El veredicto es entonces
+  `not_comparable` contra una curva que depende de la frecuencia, nunca una suposición.
+- **Suma vectorial.** `pvs_mm_s` es la suma vectorial real (máximo de la suma de cuadrados muestra a muestra); la seudo
+  suma vectorial es la raíz de la suma de los cuadrados de los tres picos de componente, una cota superior de la real.
+- **FFT.** `fft_frequency` toma la frecuencia dominante de todo el registro y lista los picos a 6 dB del mayor.
+- **Aceleración y desplazamiento.** Dependen de la precisión del archivo exportado: con tres cifras significativas o
+  menos el resumen avisa. El desplazamiento integra cada medio ciclo como la suma de V por el paso de tiempo y divide
+  entre dos el mayor, como describe el manual de Instantel.
 
 ## Convenciones
 

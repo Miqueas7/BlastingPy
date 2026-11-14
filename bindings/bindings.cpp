@@ -12,6 +12,7 @@
 #include "blastingpy/least_squares.hpp"
 #include "blastingpy/method_info.hpp"
 #include "blastingpy/units.hpp"
+#include "blastingpy/waveform.hpp"
 
 namespace nb = nanobind;
 using namespace blastingpy;
@@ -131,4 +132,39 @@ NB_MODULE(_blastingpy_core, m) {
            "Limit of the curve at frequency_hz (Hz), in the units of the segments; undefined outside the curve.");
     cc.def("intersection_frequency", &intersection_frequency, nb::arg("velocity"), nb::arg("displacement"),
            "Frequency (Hz) where constant velocity and constant displacement meet: velocity / (2 pi displacement).");
+
+    nb::module_ wf = m.def_submodule("_waveform", "Waveform peaks and vector sum.");
+    nb::class_<Peak>(wf, "Peak", "Largest |x| (value >= 0) and the index of its first occurrence.")
+        .def_ro("value", &Peak::value)
+        .def_ro("index", &Peak::index);
+    wf.def("peak_abs", &peak_abs, nb::arg("x"), "Peak of one channel: max |x| and its first index.");
+    wf.def("vector_sum_peak", &vector_sum_peak, nb::arg("t"), nb::arg("v"), nb::arg("l"),
+           "Largest sqrt(t^2 + v^2 + l^2) computed sample by sample (true vector sum) and its index.");
+    wf.def("pseudo_vector_sum", &pseudo_vector_sum, nb::arg("peak_t"), nb::arg("peak_v"), nb::arg("peak_l"),
+           "Pseudo vector sum sqrt(peak_t^2 + peak_v^2 + peak_l^2); an upper bound of the true vector sum.");
+    nb::enum_<ZcMethod>(wf, "ZcMethod", "How the half period is measured.")
+        .value("WholeSamples", ZcMethod::WholeSamples, "Count whole samples of the peak's sign (Instantel-like)")
+        .value("Interpolated", ZcMethod::Interpolated, "Linearly interpolate both zero crossings (no limit)");
+    nb::enum_<ZcStatus>(wf, "ZcStatus", "Outcome of the zero-crossing frequency.")
+        .value("Ok", ZcStatus::Ok)
+        .value("AboveLimit", ZcStatus::AboveLimit, "Whole-sample frequency above the Instantel limit")
+        .value("Incomplete", ZcStatus::Incomplete, "A zero crossing is missing (record cut); values are NaN")
+        .value("NotComputable", ZcStatus::NotComputable, "The peak sample is zero; values are NaN");
+    nb::class_<ZcFrequency>(wf, "ZcFrequency", "Zero-crossing frequency (Hz), half period (s) and status.")
+        .def_ro("frequency_hz", &ZcFrequency::frequency_hz)
+        .def_ro("half_period_s", &ZcFrequency::half_period_s)
+        .def_ro("status", &ZcFrequency::status);
+    wf.def("instantel_zc_limit_hz", &instantel_zc_limit_hz, nb::arg("sample_rate_hz"),
+           "Instantel display limit of the zero-crossing frequency: 100 * fs / 1024 Hz.");
+    wf.def("zero_crossing_frequency", &zero_crossing_frequency, nb::arg("x"), nb::arg("sample_rate_hz"),
+           nb::arg("peak_index"), nb::arg("method"),
+           "Frequency 1 / (2 T) of the half cycle containing x[peak_index], between its zero crossings.");
+    nb::enum_<DiffMethod>(wf, "DiffMethod", "How velocity is differentiated into acceleration.")
+        .value("Forward", DiffMethod::Forward, "x[i+1] - x[i] over dt")
+        .value("Central", DiffMethod::Central, "(x[i+1] - x[i-1]) over 2 dt; one-sided at the ends");
+    wf.attr("standard_gravity_mm_s2") = standard_gravity_mm_s2;
+    wf.def("peak_acceleration", &peak_acceleration, nb::arg("velocity_mm_s"), nb::arg("sample_rate_hz"),
+           nb::arg("method"), "Peak |dV/dt| (mm/s^2) of a velocity record (mm/s) and its sample index.");
+    wf.def("peak_displacement", &peak_displacement, nb::arg("velocity_mm_s"), nb::arg("sample_rate_hz"),
+           "Peak displacement (mm): largest complete half-cycle sum(V dt), halved; value is NaN if none is complete.");
 }

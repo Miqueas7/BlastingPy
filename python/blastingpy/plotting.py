@@ -14,7 +14,7 @@ import pandas as pd
 from . import criteria
 from .attenuation import Law
 
-__all__ = ["plot_site_law", "plot_compliance"]
+__all__ = ["plot_site_law", "plot_compliance", "plot_record"]
 
 _LABELS = {Law.SquareRoot: "m/kg^0.5", Law.CubeRoot: "m/kg^(1/3)"}
 _COLORS = {"complies": "tab:green", "exceeds": "tab:red", "indeterminate": "tab:orange", "not_comparable": "tab:gray"}
@@ -163,3 +163,35 @@ def plot_compliance(events, profile, criterion, ax=None):
     if created:
         ax.figure.tight_layout()
     return ax
+
+
+_CHANNEL_ORDER = ("transverse", "vertical", "longitudinal", "mic")
+
+
+def plot_record(record, *, fig=None):
+    """One panel per channel of ``record`` (transverse, vertical, longitudinal, mic), sharing the time axis; returns the figure.
+
+    Each panel marks the channel's peak ``|x|`` (value and time in the legend). Draws into ``fig`` (adding its
+    subplots) when given, else creates a figure; never calls ``plt.show()``.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        raise ImportError("matplotlib is required for plotting: pip install blastingpy[viz]") from None
+    names = [c for c in _CHANNEL_ORDER if c in record.channels]
+    if fig is None:
+        fig = plt.figure(figsize=(9, 2.2 * len(names) + 0.8))
+    axes = fig.subplots(len(names), 1, sharex=True, squeeze=False)[:, 0]
+    t = record.time_s()
+    for ax, name in zip(axes, names):
+        x = np.asarray(record.channels[name], dtype=float)
+        i = int(np.argmax(np.abs(x)))
+        unit = "Pa" if name == "mic" else "mm/s"
+        ax.plot(t, x, color="tab:blue", linewidth=0.8)
+        ax.plot([t[i]], [x[i]], linestyle="none", marker="o", color="tab:red",
+                label=f"Peak {abs(x[i]):.4g} {unit} at {t[i]:.4g} s")
+        ax.set(title=name, ylabel="Pressure (Pa)" if name == "mic" else "Velocity (mm/s)")
+        ax.legend(loc="upper right", fontsize="small")
+    axes[-1].set_xlabel("Time (s)")
+    fig.tight_layout()
+    return fig

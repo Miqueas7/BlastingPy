@@ -49,6 +49,9 @@ _QUANTITY = {"distance_m": "distance", "charge_kg": "charge", "ppv_mm_s": "veloc
              "ppv_v_mm_s": "velocity", "ppv_l_mm_s": "velocity", "pvs_mm_s": "velocity"}
 _NUMBER = {None: re.compile(r"^-?\d+([.,]\d+)?$"), ",": re.compile(r"^-?\d+(,\d+)?$"),
            ".": re.compile(r"^-?\d+(\.\d+)?$")}
+# Opt-in de quien lee formas de onda (read_waveform_csv): los registradores escriben 1e-05; read_events lo sigue rechazando.
+_NUMBER_SCI = {None: re.compile(r"^-?\d+([.,]\d+)?([eE][+-]?\d+)?$"), ",": re.compile(r"^-?\d+(,\d+)?([eE][+-]?\d+)?$"),
+               ".": re.compile(r"^-?\d+(\.\d+)?([eE][+-]?\d+)?$")}
 # Donde se aceptan las dos marcas, "1,250" o "1.250" puede ser 1.25 o 1250: se rechaza y se pide decimal=.
 _AMBIGUOUS = re.compile(r"^-?[1-9]\d{0,2}[.,]\d{3}$")
 _PREFIX = "Domain error [BlastingPy]"
@@ -160,11 +163,11 @@ def _is_empty(value, na_values) -> bool:
         return False
 
 
-def _number(value, decimal):
-    """Return the value as a float, or None when it is not a number."""
+def _number(value, decimal, scientific=False):
+    """Return the value as a float, or None when it is not a number (``scientific=True`` accepts ``1e-05``)."""
     if isinstance(value, str):
         text = value.strip()
-        return float(text.replace(",", ".")) if _NUMBER[decimal].match(text) else None
+        return float(text.replace(",", ".")) if (_NUMBER_SCI if scientific else _NUMBER)[decimal].match(text) else None
     try:
         return float(value)
     except (TypeError, ValueError):
