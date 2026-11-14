@@ -288,4 +288,41 @@ NB_MODULE(_blastingpy_core, m) {
             "Radial distance where the PPV falls to the limit at height z; NaN if it never does.");
     nfd.def("ppv_critical", &nearfield::ppv_critical, nb::arg("tensile_strength_pa"), nb::arg("p_velocity_m_s"),
             nb::arg("youngs_modulus_pa"), "T Vp / E in mm/s (Onederra and Esen eq. 11); pass the static E.");
+
+    nb::class_<nearfield::Medium>(nfd, "Medium", "Elastic medium: P and S velocities (m/s), density (kg/m3); mu = rho Vs^2.")
+        .def(nb::init<double, double, double>(), nb::arg("p_velocity_m_s"), nb::arg("s_velocity_m_s"),
+             nb::arg("density_kg_m3"))
+        .def_ro("p_velocity_m_s", &nearfield::Medium::p_velocity_m_s)
+        .def_ro("s_velocity_m_s", &nearfield::Medium::s_velocity_m_s)
+        .def_ro("density_kg_m3", &nearfield::Medium::density_kg_m3);
+    nb::class_<nearfield::PressureSource>(
+        nfd, "PressureSource",
+        "Blair (2007) eq. 8 pressure s(t) = P_VN (e gamma / n)^n t^n exp(-gamma t): von Neumann pressure (Pa), "
+        "integer n (2 to 20) and decay gamma (1/s).")
+        .def(nb::init<double, int, double>(), nb::arg("vn_pressure_pa"), nb::arg("n"), nb::arg("gamma_per_s"))
+        .def_ro("vn_pressure_pa", &nearfield::PressureSource::vn_pressure_pa)
+        .def_ro("n", &nearfield::PressureSource::n)
+        .def_ro("gamma_per_s", &nearfield::PressureSource::gamma_per_s);
+    nb::class_<nearfield::Waveform>(nfd, "Waveform", "Particle velocity (mm/s) in the (radial, axial) frame of the hole.")
+        .def_ro("radial_mm_s", &nearfield::Waveform::radial_mm_s)
+        .def_ro("axial_mm_s", &nearfield::Waveform::axial_mm_s);
+    nfd.def("pressure_function", &nearfield::pressure_function, nb::arg("source"), nb::arg("t_s"),
+            "Blair (2007) eq. 8 pressure (Pa) at t_s (s); its maximum is P_VN at t = n / gamma; 0 for t < 0.");
+    nfd.def("g_function", &nearfield::g_function, nb::arg("n"), nb::arg("tau"),
+            "Blair (2007) eq. 15: second derivative of tau^n exp(-tau); 0 for tau < 0.");
+    nfd.def("g_peak", &nearfield::g_peak, nb::arg("n"),
+            "G_n, the largest POSITIVE value of g(tau). Not the peak of |g|: for n >= 7 the negative trough is larger "
+            "in modulus (n = 8: -767.83 vs 680.17), so never use G_n a / r as a PPV; take the peak of the waveform.");
+    nfd.def("mean_frequency_factor", &nearfield::mean_frequency_factor, nb::arg("n"),
+            "c = omega_A / gamma (Blair 2007 eqs. 10-12; closed form inferred): 0.5, 0.375, 0.3125 for n = 4, 6, 8.");
+    nfd.def("scaled_frequency", &nearfield::scaled_frequency, nb::arg("source"), nb::arg("medium"),
+            nb::arg("hole_radius_m"), "Omega_A = c gamma a / Vp (Blair 2007); Heelan holds for Omega_A <~ 0.1.");
+    nfd.def("heelan_amplitude", &nearfield::heelan_amplitude, nb::arg("source"), nb::arg("medium"),
+            nb::arg("hole_radius_m"), nb::arg("half_length_m"),
+            "F(gamma) = gamma^2 a L P_VN (e/n)^n / (2 mu Vp) in mm/s (Blair 2007 eq. 16); L is the half length.");
+    nfd.def("heelan_element", &nearfield::heelan_element, nb::arg("source"), nb::arg("medium"),
+            nb::arg("hole_radius_m"), nb::arg("half_length_m"), nb::arg("r"), nb::arg("z"), nb::arg("t_s"),
+            "Velocity (mm/s) radiated by a short charge element centred at the origin (Heelan 1953 with the Blair "
+            "2007 source): P along R from R / Vp, SV perpendicular from R / Vs; phi = arccos(-z / R). "
+            "`hole_radius_m` is the hole radius (Blair); Heelan defines it as the equivalent cavity radius.");
 }

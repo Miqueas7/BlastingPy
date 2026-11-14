@@ -1,5 +1,6 @@
 import math
 
+import numpy as np
 import pytest
 
 from blastingpy import _blastingpy_core as core
@@ -33,3 +34,34 @@ def test_domain(bad):
 def test_axis_inside_charge_is_domain_error():
     with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter"):
         nf.hp_original(700, 0.7, 1.5, 1, -1.5, 1.5, 0, 0)
+
+
+def test_heelan_factors():
+    assert [nf.mean_frequency_factor(n) for n in (4, 6, 8)] == pytest.approx([0.5, 0.375, 0.3125], abs=5e-4)
+    assert nf.g_peak(6) == pytest.approx(21.9602, rel=1e-4)
+    assert nf.g_function(n=6, tau=-1.0) == 0.0
+
+
+def test_heelan_element_from_python():
+    rock = nf.Medium(p_velocity_m_s=3000 * math.sqrt(3), s_velocity_m_s=3000, density_kg_m3=2700)
+    source = nf.PressureSource(vn_pressure_pa=5e9, n=6, gamma_per_s=20000)
+    assert (rock.s_velocity_m_s, source.n) == (3000, 6)
+    with pytest.raises(AttributeError):
+        source.n = 4
+    assert nf.pressure_function(source, 6 / 20000) == pytest.approx(5e9, rel=1e-12)
+    r, a, half = 10.0, 0.05, 0.1
+    gamma, vp = 20000, rock.p_velocity_m_s
+    t = np.arange(r / vp - 1e-4, r / vp + 30 / gamma, 0.002 / gamma)
+    w = nf.heelan_element(source, rock, hole_radius_m=a, half_length_m=half, r=r, z=0.0, t_s=t)
+    assert len(w.radial_mm_s) == len(w.axial_mm_s) == len(t)
+    want = nf.heelan_amplitude(source, rock, a, half) * nf.g_peak(6) * a / r
+    assert max(abs(v) for v in w.radial_mm_s) == pytest.approx(want, rel=1e-3)
+    assert nf.scaled_frequency(source, rock, a) > 0
+
+
+def test_heelan_domain():
+    rock = nf.Medium(5000, 3000, 2700)
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter"):
+        nf.heelan_element(nf.PressureSource(5e9, 6, 2e4), rock, 0.05, 0.1, 0.0, 1.0, [0.0, 1e-3])
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter"):
+        nf.g_peak(21)

@@ -18,13 +18,34 @@
  * - Condición derivada aquí, no leída en una fuente: con r = 0 sobre el tramo cargado el integrando va como
  *   1/|z' − z|^(β/α); la integral diverge solo si β ≥ α. Con β < α es finita: ∫|u|^(−β/α)du en forma cerrada.
  *
+ * Elemento de Heelan (FUENTES_SPRINT5.md, «Radiación de Heelan»):
+ * - pressure_function: s(t) = P_VN·(e·γ/n)^n·H(t)·t^n·e^(−γt) (Blair 2007 ec. 8, p. E35) [V1]; máximo P_VN en t = n/γ.
+ * - g_function: g(τ) = H(τ)·e^(−τ)·[τ^n − 2n·τ^(n−1) + n(n−1)·τ^(n−2)] = d²/dτ²(τ^n·e^(−τ)) (Blair 2007 ec. 15) [V1].
+ * - g_peak: G_n, máximo POSITIVO de g (p. E36) [V1]; 1,8513 / 21,9602 / 680,171 para n = 4, 6, 8 (recalculados; el
+ *   680,01 impreso no se reproduce). Para n ≥ 7 el valle negativo es mayor en módulo (n = 8: −767,83): G_n·a/r no es
+ *   el PPV, que se toma de la onda.
+ * - mean_frequency_factor: c = ω_A/γ (Blair 2007 ecs. 10–12; la fuente da 0,500 / 0,375 / 0,313 para n = 4, 6, 8) [V1];
+ *   la forma cerrada c = [1/(n − 1)] / [(√π/2)·Γ(n/2)/Γ((n+1)/2)] es inferida de la ec. 11 y reproduce esos valores.
+ * - scaled_frequency: Ω_A = c·γ·a/Vp (Blair 2007 ec. 12) [V1].
+ * - heelan_amplitude: F(γ) = γ²·a·L·P_VN·(e/n)^n/(2·μ·Vp) en m/s (Blair 2007 ec. 16) [V1], devuelto en mm/s; μ = ρ·Vs²;
+ *   L es la MEDIA longitud del elemento (carga de 2L, Blair 2007 Fig. 1).
+ * - heelan_element: P (ec. 13) a lo largo de R = (sen φ, −cos φ) y SV (ec. 14) a lo largo de (cos φ, sen φ) en el marco
+ *   (radial, axial) (Heelan ecs. 13a–13b, p. 691) [V1]; φ = arccos(−z/R), ángulo con el eje −z (Heelan p. 690 y Fig. 1,
+ *   p. 687) [V1]. a es el radio del taladro (convención de Blair 2007); Heelan (p. 695) lo define como el radio de la
+ *   cavidad equivalente.
+ * - Validez (Blair 2007, pp. E37–E40) [V1], no se impone: Ω_A ≲ 0,1; P y SV se desacoplan con Ω_A·r/a ≳ 5; L/a ≲ 2.
+ *   La suma de P y SV donde se solapan en el tiempo es cuestionable (p. E37).
+ *
  * Las entradas no admiten NaN ni infinito; los errores son de dominio (ver validation.hpp).
  */
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
+#include <vector>
 
 #include "blastingpy/validation.hpp"
 
@@ -176,6 +197,142 @@ inline double ppv_critical(double tensile_strength_pa, double p_velocity_m_s, do
     validation::require_positive(p_velocity_m_s, "p_velocity_m_s");
     validation::require_positive(youngs_modulus_pa, "youngs_modulus_pa");
     return 1000.0 * tensile_strength_pa * p_velocity_m_s / youngs_modulus_pa;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Elemento de Heelan (Heelan 1953 con la fuente explícita de Blair 2007)
+
+/// Medio elástico: velocidades P y S (m/s) y densidad (kg/m³); μ = ρ·Vs².
+struct Medium {
+    double p_velocity_m_s;
+    double s_velocity_m_s;
+    double density_kg_m3;
+};
+
+/// s(t) de Blair (2007) ec. 8: presión de von Neumann (Pa), exponente entero n y decaimiento γ (1/s).
+struct PressureSource {
+    double vn_pressure_pa;
+    int n;
+    double gamma_per_s;
+};
+
+/// Velocidad de partícula (mm/s) en el marco (r, z) del taladro, una muestra por instante.
+struct Waveform {
+    std::vector<double> radial_mm_s;
+    std::vector<double> axial_mm_s;
+};
+
+namespace detail {
+
+inline void check_n(int n) { validation::require_in_range(n, 2, 20, "n"); }
+
+inline void check_source(const PressureSource& s) {
+    validation::require_positive(s.vn_pressure_pa, "vn_pressure_pa");
+    check_n(s.n);
+    validation::require_positive(s.gamma_per_s, "gamma_per_s");
+}
+
+inline void check_medium(const Medium& m) {
+    validation::require_positive(m.p_velocity_m_s, "p_velocity_m_s");
+    validation::require_positive(m.s_velocity_m_s, "s_velocity_m_s");
+    validation::require_positive(m.density_kg_m3, "density_kg_m3");
+    validation::require(m.p_velocity_m_s > m.s_velocity_m_s, "p_velocity_m_s", "must be greater than s_velocity_m_s",
+                        m.p_velocity_m_s);
+}
+
+/// g(τ) sin validar (ec. 15).
+inline double g(int n, double tau) {
+    if (tau < 0.0) return 0.0;
+    return std::exp(-tau) * std::pow(tau, n - 2) * (tau * tau - 2.0 * n * tau + n * (n - 1.0));
+}
+
+}  // namespace detail
+
+/// P_VN·(e·γ/n)^n·t^n·e^(−γt) en Pa; 0 si t < 0. Escrita como P_VN·(γt/n)^n·e^(n − γt) para no desbordar.
+inline double pressure_function(const PressureSource& source, double t_s) {
+    detail::check_source(source);
+    validation::require_finite(t_s, "t_s");
+    if (t_s < 0.0) return 0.0;
+    const double x = source.gamma_per_s * t_s;
+    return source.vn_pressure_pa * std::pow(x / source.n, source.n) * std::exp(source.n - x);
+}
+
+/// g(τ) = e^(−τ)·[τ^n − 2n·τ^(n−1) + n(n−1)·τ^(n−2)] (ec. 15); 0 si τ < 0.
+inline double g_function(int n, double tau) {
+    detail::check_n(n);
+    validation::require_finite(tau, "tau");
+    return detail::g(n, tau);
+}
+
+/// G_n: máximo POSITIVO de g(τ) para τ ≥ 0 (barrido de paso 1e-3 en [0, 4n + 40] y sección áurea alrededor del mejor
+/// punto). No es el pico de |g|: para n ≥ 7 el valle negativo es mayor en módulo. Con n = 2 el máximo es g(0) = 2.
+inline double g_peak(int n) {
+    detail::check_n(n);
+    const double h = 1e-3;
+    const int steps = static_cast<int>((4.0 * n + 40.0) / h);
+    int best = 0;
+    for (int i = 1; i <= steps; ++i)
+        if (detail::g(n, i * h) > detail::g(n, best * h)) best = i;
+    double lo = best > 0 ? (best - 1) * h : 0.0, hi = (best + 1) * h;
+    const double phi = 0.5 * (std::sqrt(5.0) - 1.0);
+    for (int i = 0; i < 100; ++i) {
+        const double x1 = hi - phi * (hi - lo), x2 = lo + phi * (hi - lo);
+        if (detail::g(n, x1) < detail::g(n, x2)) lo = x1;
+        else hi = x2;
+    }
+    return std::max(detail::g(n, 0.5 * (lo + hi)), detail::g(n, best * h));
+}
+
+/// c = ω_A/γ = [1/(n − 1)] / [(√π/2)·Γ(n/2)/Γ((n+1)/2)] (forma cerrada de la ec. 11, inferida aquí).
+inline double mean_frequency_factor(int n) {
+    detail::check_n(n);
+    const double pi = 3.14159265358979323846;
+    return (1.0 / (n - 1.0)) / (0.5 * std::sqrt(pi) * std::tgamma(0.5 * n) / std::tgamma(0.5 * (n + 1.0)));
+}
+
+/// Ω_A = c·γ·a/Vp (Blair 2007 ec. 12); Heelan vale con Ω_A ≲ 0,1.
+inline double scaled_frequency(const PressureSource& source, const Medium& medium, double hole_radius_m) {
+    detail::check_source(source);
+    detail::check_medium(medium);
+    validation::require_positive(hole_radius_m, "hole_radius_m");
+    return mean_frequency_factor(source.n) * source.gamma_per_s * hole_radius_m / medium.p_velocity_m_s;
+}
+
+/// F(γ) = γ²·a·L·P_VN·(e/n)^n/(2·μ·Vp) (Blair 2007 ec. 16), en mm/s; L = media longitud del elemento.
+inline double heelan_amplitude(const PressureSource& source, const Medium& medium, double hole_radius_m,
+                               double half_length_m) {
+    detail::check_source(source);
+    detail::check_medium(medium);
+    validation::require_positive(hole_radius_m, "hole_radius_m");
+    validation::require_positive(half_length_m, "half_length_m");
+    const double mu = medium.density_kg_m3 * medium.s_velocity_m_s * medium.s_velocity_m_s;
+    const double e_over_n = std::exp(1.0) / source.n;
+    return 1000.0 * source.gamma_per_s * source.gamma_per_s * hole_radius_m * half_length_m * source.vn_pressure_pa *
+           std::pow(e_over_n, source.n) / (2.0 * mu * medium.p_velocity_m_s);
+}
+
+/// Velocidad (mm/s) del elemento centrado en el origen en el punto (r, z), para cada instante de t_s (s).
+/// P (ec. 13) llega en R/Vp a lo largo de R; SV (ec. 14) llega en R/Vs, perpendicular. Antes de R/Vp todo es 0.
+inline Waveform heelan_element(const PressureSource& source, const Medium& medium, double hole_radius_m,
+                               double half_length_m, double r, double z, const std::vector<double>& t_s) {
+    const double amplitude = heelan_amplitude(source, medium, hole_radius_m, half_length_m);
+    validation::require_positive(r, "r");
+    validation::require_finite(z, "z");
+    for (double t : t_s) validation::require_finite(t, "t_s");
+    const double R = std::hypot(r, z);
+    const double sin_phi = r / R, cos_phi = -z / R;  // φ = arccos(−z/R), desde el eje −z (Heelan Fig. 1) [V1]
+    const double vp = medium.p_velocity_m_s, vs = medium.s_velocity_m_s, gamma = source.gamma_per_s;
+    const double base = hole_radius_m * amplitude / R;  // a·F/(r·√(1 + 1/tan²φ)) = a·F/R
+    const double p_coef = base * (1.0 - 2.0 * (vs * vs) / (vp * vp) * cos_phi * cos_phi);  // ec. 13
+    const double sv_coef = base * (vp / vs) * 2.0 * sin_phi * cos_phi;                   // ec. 14, sen 2φ
+    Waveform w{std::vector<double>(t_s.size()), std::vector<double>(t_s.size())};
+    for (std::size_t i = 0; i < t_s.size(); ++i) {
+        const double vr = p_coef * detail::g(source.n, gamma * (t_s[i] - R / vp));
+        const double vphi = sv_coef * detail::g(source.n, gamma * (t_s[i] - R / vs));
+        w.radial_mm_s[i] = vr * sin_phi + vphi * cos_phi;
+        w.axial_mm_s[i] = -vr * cos_phi + vphi * sin_phi;
+    }
+    return w;
 }
 
 }  // namespace blastingpy::nearfield
