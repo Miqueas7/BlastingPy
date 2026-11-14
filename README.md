@@ -86,6 +86,63 @@ seismograph's own software shows.
   fewer the summary warns. Displacement integrates each half cycle as the sum of V times the time step and halves the
   largest, as the Instantel manual describes.
 
+## Airblast
+
+`blastingpy.airblast` fits the site law to the peak overpressure, checks it against the airblast limits and carries the
+published equations. The facts, pages and marks are in
+[docs/investigacion/FUENTES_SPRINT3.md](docs/investigacion/FUENTES_SPRINT3.md).
+
+```python
+from blastingpy import airblast, waveform
+
+events = waveform.events_from_records(records, distance_m=[150, 200, 250], charge_kg=[40, 80, 60])
+law = airblast.fit(events)                       # cube-root law on airblast_pa
+limit = airblast.limit_db("OSMRE-30CFR816.67", system="2Hz")
+charge = airblast.max_charge(law, 400.0, limit.pressure_pa)
+verdict = airblast.evaluate(events, "OSMRE-30CFR816.67", system="2Hz")
+```
+
+A complete, runnable version with synthetic data is in [examples/03-airblast](examples/03-airblast/).
+
+- **Units.** Inside everything is Pa. `airblast.to_db` / `from_db` convert with P0 = 20 uPa; `read_events(...,
+  units={"pressure": "Pa" | "kPa" | "psi" | "dB"})` and `units.to_si` accept Pa, kPa and psi. Events carry
+  `airblast_pa` and `airblast_freq_hz`; `waveform.events_from_records` fills them from the microphone.
+- **Site law.** `airblast.fit` is the regression of the vibration law with the cube-root form,
+  P = K (D / W^(1/3))^-beta, on `airblast_pa`: same statistics, upper bound K 10^(z sigma) (RI 8485, Table B-1, fits
+  airblast this way). `predict`, `max_charge` and `distance_for` work as in `attenuation`. `outliers` and `residuals`
+  refer to the rows used in the fit.
+- **An airblast-only campaign** is passed as a DataFrame with `distance_m`, `charge_kg` and `airblast_pa`.
+- **The measuring system is required.** The library refuses to compare against a limit without it.
+- **A C-weighted slow level is not a linear peak:** with `system="c-slow"` every verdict is `not_comparable`.
+
+| System | USBM RI 8485 (1980) | OSMRE 30 CFR 816.67 |
+|---|---|---|
+| `0.1Hz` (lower cutoff 0.1 Hz or lower) | 134 dB | 134 dB, only if the regulatory authority approves |
+| `2Hz` | 133 dB | 133 dB |
+| `6Hz` (a 5-Hz system uses this row) | 129 dB | 129 dB |
+| `c-slow` (C-weighted, slow) | 105 dB, events up to 2 s | 105 dB, only if the regulatory authority approves |
+
+`airblast.system_from_cutoff(low_cutoff_hz)` gives the system of a linear microphone. The limit depends on the lower
+cutoff because a level in dB is a peak of what the microphone passes: the lower the cutoff, the more low-frequency
+pressure it counts, so each system has its own limit.
+
+Published equations (`list_equations`, `published`, `predict_published`) are medians, without an upper bound, tied to
+the system they were fitted with. Fourteen come from RI 8485 Table B-1, two from the OSMRE BLEP and one from AS 2187.2.
+
+| Equation id | System | Mark |
+|---|---|---|
+| `USBM-RI8485/coal-highwall/{0.1Hz,2Hz,5Hz,c-slow}` | as named | V1 |
+| `USBM-RI8485/coal-parting/{0.1Hz,2Hz,5Hz,c-slow}` | as named | V1 |
+| `USBM-RI8485/metal-mine-highwall/0.1Hz` | 0.1 Hz | V1 |
+| `USBM-RI8485/quarry/0.1Hz`, `quarry-direction-of-initiation`, `quarry-behind-face`, `quarry-opposite-initiation`, `quarry-front-of-face` | 0.1 Hz | V1 |
+| `OSMRE-BLEP/highwall`, `OSMRE-BLEP/parting` | not stated | V1 |
+| `AS2187.2-2006/free-face` | not stated | V2 |
+
+BLEP's two equations come from 0.1 Hz fits, but BLEP compares them with the 2 Hz limit; `evaluate_prediction` warns when
+the equation's system differs from the limit's. AS 2187.2 is [V2], from a single secondary source.
+
+Not included: wind correction, the Australian comfort limits and AS 2187.2 from the standard itself.
+
 ## Conventions
 
 - **Units.** Inside the library everything is SI: m, kg, mm/s, Hz. `read_events(units="imperial")` (or a dict per

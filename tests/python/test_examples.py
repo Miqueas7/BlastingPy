@@ -40,3 +40,21 @@ def test_waveform_to_events_example(tmp_path, monkeypatch, capsys):
             break
         table.append(line)
     assert len(table) - 1 == 6  # the header plus one row per record
+
+
+EXAMPLE_3 = pathlib.Path(__file__).resolve().parents[2] / "examples" / "03-airblast" / "airblast.py"
+
+
+def test_airblast_example(capsys):
+    runpy.run_path(str(EXAMPLE_3), run_name="__main__")
+    lines = capsys.readouterr().out.splitlines()
+    assert any(line.startswith("Airblast site law") for line in lines)
+    assert any(line.startswith("Limit") for line in lines)
+    start = next(i for i, line in enumerate(lines) if line.startswith(" distance_m"))
+    table = []
+    for line in lines[start:]:
+        if not line.strip():
+            break
+        table.append(line)
+    assert len(table) - 1 == 8  # the header plus one row per event
+    assert any("mixes measuring systems" in line for line in lines)
