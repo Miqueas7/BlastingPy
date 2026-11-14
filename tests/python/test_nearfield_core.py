@@ -115,3 +115,19 @@ def test_full_blast_weights_from_python():
     e = nf.damage_weights([0.0, 10, 20], [0.0] * 3, [1.0] * 3, [0.0, 1, 2], 10.0, 1e6, 10.0, 0.2)
     assert e[1] == pytest.approx(1 / 1.2, rel=1e-3)
     assert nf.max_charge_per_window([0.0, 0.005, 0.010], [100.0] * 3) == 200.0
+
+
+def test_monte_carlo_from_python():
+    seed = np.array([0.0, 0.6, 1.0, -0.4, 0.1])
+    arrivals, amplitudes = [0.0, 0.002, 0.005], [1.0, 0.8, -0.5]
+    # Mismos cuatro picos que fija la prueba de C++ (candado de portabilidad; rel 1e-9, no bit a bit).
+    peaks = nf.monte_carlo_peaks(seed, 1000.0, arrivals, amplitudes, [1e-3] * 3, 0.25, 4, 12345)
+    assert list(peaks) == pytest.approx(
+        [1.5646578308494763, 0.9396280591874882, 0.984018375475602, 1.391979964537508], rel=1e-9
+    )
+    still = nf.monte_carlo_peaks(seed, 1000.0, arrivals, amplitudes, [0.0] * 3, 0.0, 5, rng_seed=1)
+    assert list(still) == pytest.approx([np.abs(nf.superpose(seed, 1000.0, arrivals, amplitudes)).max()] * 5, rel=1e-12)
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter 'delay_sigma_s'"):
+        nf.monte_carlo_peaks(seed, 1000.0, arrivals, amplitudes, [0.0, 0.0, -1e-3], 0.25, 4, 1)
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter 'simulations'"):
+        nf.monte_carlo_peaks(seed, 1000.0, arrivals, amplitudes, [0.0] * 3, 0.25, 0, 1)

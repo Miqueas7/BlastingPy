@@ -354,6 +354,13 @@ NB_MODULE(_blastingpy_core, m) {
             nb::arg("amplitudes"),
             "v(t) = sum_j w_j s(t - d_j) (Hinzen 1988 eqs. 3 and 7; Blair 1999 eq. 1a), sampled from t = 0; length = "
             "ceil(max arrival * fs) + len(seed) + 1; an arrival between samples is spread linearly over its neighbours.");
+    nfd.def("monte_carlo_peaks", &nearfield::monte_carlo_peaks, nb::arg("seed"), nb::arg("sample_rate_hz"),
+            nb::arg("nominal_arrival_times_s"), nb::arg("amplitudes"), nb::arg("delay_sigma_s"), nb::arg("amplitude_cv"),
+            nb::arg("simulations"), nb::arg("rng_seed"),
+            "Peak |v| of each simulation of the superposed seed with d_jp = d_j + sigma_j z and w_jp = w_j (1 + c z'), "
+            "z and z' standard normal (Blair 1999 eqs. 1b, 7 and 9). The normal delay scatter is a design choice (the "
+            "source gives no distribution). Negative times and negative amplitude factors are clipped to 0. Same rng_seed "
+            "-> same peaks on every platform to about 1e-9 relative.");
     nfd.def("screening_factor", &nearfield::screening_factor, nb::arg("distance_m"), nb::arg("screening_count"),
             nb::arg("g") = 23337.0, nb::arg("floor") = 0.2,
             "S = max(floor, 1 / (1 + g h^-2 sqrt(N_S))) (Blair 1999 eqs. 10b-10c); g in m^2 (inferred).");

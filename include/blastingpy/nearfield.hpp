@@ -57,7 +57,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <random>
 #include <vector>
 
 #include "blastingpy/validation.hpp"
@@ -482,6 +484,61 @@ inline std::vector<double> superpose(const std::vector<double>& seed, double sam
         }
     }
     return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Monte Carlo sobre retardos y amplitud (FUENTES_SPRINT5.md, «Onda semilla y superposición», Blair 1999)
+//
+// - monte_carlo_peaks: v_p(t) = s(t) * Σ_j w_jp·δ(t − d_jp), p = 1 … P (Blair 1999 ec. 1b, p. 336) [V1]; se devuelve el
+//   pico máx |v_p| de cada simulación.
+// - Amplitud: w_jp = w_j·(1 + c·z'_jp) con z' normal estándar y c = σ/μ de la ley de un taladro (Blair 1999 ec. 7,
+//   pp. 340–341; c = 0,25 en su ejemplo) [V1]. Sus conclusiones (p. 362) dicen que los números salen «del rango
+//   (−1, +1)»: contradice la sección 2.2 y no se usa. Un factor negativo se recorta a 0 (la ley no da amplitudes
+//   negativas; inferido); si w_j es negativo (polaridad), el factor lo multiplica.
+// - Tiempos: d_jp = d_j + σ_j·z_jp, con d_j el tiempo nominal visto en el monitor (Blair 1999 ec. 9, p. 342) [V1]. La
+//   fuente solo dice que d_jp sale «de una distribución conocida»: NO publica el tipo ni la desviación. La normal con
+//   σ_j que da el usuario por pozo es ELECCIÓN DE DISEÑO, no un valor leído. Un tiempo negativo se recorta a 0.
+// - No entra la semilla fluctuante (ecs. 2–4 y 14): su normalización es [NV].
+// - Generador: std::mt19937_64 (secuencia fijada por el estándar) y conversiones escritas a mano, para que la misma
+//   rng_seed dé los mismos picos en MSVC, GCC y Clang; std::normal_distribution y std::uniform_real_distribution no se
+//   usan porque su algoritmo cambia entre bibliotecas. Uniforme u = (k + 1)/2^53 con k los 53 bits altos: (0, 1], así
+//   log(u) nunca ve 0. Box-Muller: z = √(−2·ln u1)·cos(2π·u2), z' = √(−2·ln u1)·sin(2π·u2), las dos salidas del par.
+// - Orden de los sorteos (fijo): por cada simulación p y cada pozo j en el orden de entrada, u1 y luego u2; z va al
+//   retardo y z' a la amplitud. Se sortean siempre, aunque σ_j o c sean 0, para que cambiarlos no corra la secuencia.
+// - log, cos y sin no redondean igual en todas las bibliotecas: entre plataformas los picos coinciden a ~1e-9
+//   relativo, no bit a bit.
+
+/// Pico |v| de cada una de `simulations` superposiciones con d_jp = d_j + σ_j·z y w_jp = w_j·(1 + c·z').
+inline std::vector<double> monte_carlo_peaks(const std::vector<double>& seed, double sample_rate_hz,
+                                             const std::vector<double>& nominal_arrival_times_s,
+                                             const std::vector<double>& amplitudes,
+                                             const std::vector<double>& delay_sigma_s, double amplitude_cv,
+                                             int simulations, std::uint64_t rng_seed) {
+    const std::size_t holes = nominal_arrival_times_s.size();
+    validation::require(amplitudes.size() == holes, "amplitudes", "must have the same length as nominal_arrival_times_s",
+                        static_cast<double>(amplitudes.size()));
+    validation::require(delay_sigma_s.size() == holes, "delay_sigma_s",
+                        "must have the same length as nominal_arrival_times_s", static_cast<double>(delay_sigma_s.size()));
+    for (std::size_t j = 0; j < holes; ++j) {
+        validation::require_non_negative(nominal_arrival_times_s[j], "nominal_arrival_times_s");
+        validation::require_non_negative(delay_sigma_s[j], "delay_sigma_s");
+    }
+    validation::require_non_negative(amplitude_cv, "amplitude_cv");
+    validation::require(simulations >= 1, "simulations", "must be >= 1", simulations);
+    std::mt19937_64 generator(rng_seed);
+    auto uniform = [&generator] { return static_cast<double>((generator() >> 11) + 1) / 9007199254740992.0; };  // 2^53
+    std::vector<double> peaks(static_cast<std::size_t>(simulations), 0.0), times(holes), weights(holes);
+    for (double& peak : peaks) {
+        for (std::size_t j = 0; j < holes; ++j) {
+            const double radius = std::sqrt(-2.0 * std::log(uniform()));
+            const double angle = 6.283185307179586 * uniform();
+            times[j] = std::max(0.0, nominal_arrival_times_s[j] + delay_sigma_s[j] * radius * std::cos(angle));
+            weights[j] = amplitudes[j] * std::max(0.0, 1.0 + amplitude_cv * radius * std::sin(angle));
+        }
+        // superpose valida la semilla, la frecuencia de muestreo y las amplitudes
+        for (double v : superpose(seed, sample_rate_hz, times, weights)) peak = std::max(peak, std::fabs(v));
+    }
+    return peaks;
 }
 
 /// S = max(piso, 1/(1 + g·h⁻²·√N_S)) (Blair 1999 ecs. 10b–10c); g en m².
