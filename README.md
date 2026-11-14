@@ -143,62 +143,47 @@ the equation's system differs from the limit's. AS 2187.2 is [V2], from a single
 
 Not included: wind correction, the Australian comfort limits and AS 2187.2 from the standard itself.
 
-## Airblast
+## Flyrock
 
-`blastingpy.airblast` fits the site law to the peak overpressure, checks it against the airblast limits and carries the
-published equations. The facts, pages and marks are in
-[docs/investigacion/FUENTES_SPRINT3.md](docs/investigacion/FUENTES_SPRINT3.md).
+`blastingpy.flyrock` carries the published rock-projection models, a per-hole comparison table and the clearance
+distance. The facts, pages and marks are in
+[docs/investigacion/FUENTES_SPRINT4.md](docs/investigacion/FUENTES_SPRINT4.md).
 
 ```python
-from blastingpy import airblast, waveform
+import pandas as pd
+from blastingpy import flyrock
 
-events = waveform.events_from_records(records, distance_m=[150, 200, 250], charge_kg=[40, 80, 60])
-law = airblast.fit(events)                       # cube-root law on airblast_pa
-limit = airblast.limit_db("OSMRE-30CFR816.67", system="2Hz")
-charge = airblast.max_charge(law, 400.0, limit.pressure_pa)
-verdict = airblast.evaluate(events, "OSMRE-30CFR816.67", system="2Hz")
+holes = pd.DataFrame({"diameter_mm": [165.0, 165.0], "burden_m": [4.0, 3.2], "stemming_m": [3.0, 2.5],
+                      "linear_charge_kg_m": [18.2, 18.2], "hole_angle_from_vertical_deg": [10.0, 10.0]})
+table = flyrock.compare(holes, k=27.0)               # ranges in m, one row per hole
+worst = table["rm_max_m"].max()
+clear = flyrock.clearance(worst, target="people", regulation="PE-DS024-2016-EM")
+print(clear.distance_m, clear.governs)
 ```
 
-A complete, runnable version with synthetic data is in [examples/03-airblast](examples/03-airblast/).
+A complete, runnable version with a synthetic hole table is in [examples/04-flyrock](examples/04-flyrock/).
 
-- **Units.** Inside everything is Pa. `airblast.to_db` / `from_db` convert with P0 = 20 uPa; `read_events(...,
-  units={"pressure": "Pa" | "kPa" | "psi" | "dB"})` and `units.to_si` accept Pa, kPa and psi. Events carry
-  `airblast_pa` and `airblast_freq_hz`; `waveform.events_from_records` fills them from the microphone.
-- **Site law.** `airblast.fit` is the regression of the vibration law with the cube-root form,
-  P = K (D / W^(1/3))^-beta, on `airblast_pa`: same statistics, upper bound K 10^(z sigma) (RI 8485, Table B-1, fits
-  airblast this way). `predict`, `max_charge` and `distance_for` work as in `attenuation`. `outliers` and `residuals`
-  refer to the rows used in the fit.
-- **An airblast-only campaign** is passed as a DataFrame with `distance_m`, `charge_kg` and `airblast_pa`.
-- **The measuring system is required.** The library refuses to compare against a limit without it.
-- **A C-weighted slow level is not a linear peak:** with `system="c-slow"` every verdict is `not_comparable`.
+- **No model carries a safety margin; `clearance` adds it:** factor 2 for equipment and 4 for people (Richards & Moore), or your own factor >= 1.
+- **Peruvian minimum:** DS 024-2016-EM art. 267 a), as amended by DS 034-2023-EM: a 500 m radius when rock can be projected through 360 degrees, and in bench blasts at least 500 m in the direction the blast throws. It applies to the evacuation of workers (people, not equipment); the result says which of the model and the regulation governs (`governs`). Reporting the larger of the factored range and 500 m is a design decision, not the text of the regulation.
+- **`k` is required** (Richards & Moore site constant): 13.5 for soft competent rock, 27 for hard competent rock; the published data range is 15 to 37.
+- **Charge column shorter than 1 m:** `compare` uses the actual charge mass (kg) instead of the linear charge, as Richards & Moore prescribe, and warns.
+- **Hole angle** is measured from the vertical. A vertical hole gives 0 m of stemming ejection, with a warning (the source says vertical holes need an adjustment).
+- **Diameters are in mm** (the Lundborg source uses inches; the library converts and rejects values that look like inches or metres).
+- The models are different estimates, not a consensus: nothing averages them or picks one.
 
-| System | USBM RI 8485 (1980) | OSMRE 30 CFR 816.67 |
-|---|---|---|
-| `0.1Hz` (lower cutoff 0.1 Hz or lower) | 134 dB | 134 dB, only if the regulatory authority approves |
-| `2Hz` | 133 dB | 133 dB |
-| `6Hz` (a 5-Hz system uses this row) | 129 dB | 129 dB |
-| `c-slow` (C-weighted, slow) | 105 dB, events up to 2 s | 105 dB, only if the regulatory authority approves |
+| Model | Estimates | Inputs | Mark | Source read |
+|---|---|---|---|---|
+| Ballistics, `FLY-BALLISTIC` (`range_level`, `max_range_level`, `range_to_height`, `max_height`, `velocity_for_range`) | Range and height without drag | Velocity, launch angle | V1 | Roth 1979 eqs. (1)-(3), (5); Richards & Moore eqs. [4]-[5] |
+| Richards & Moore, `FLY-RM-FACE`, `FLY-RM-CRATER`, `FLY-RM-STEMMING` (`rm_face_burst`, `rm_cratering`, `rm_stemming_ejection`, `rm_min_confinement`) | Maximum range by face burst, cratering and stemming ejection; minimum burden or stemming | `k`, charge (kg/m), burden, stemming, hole angle | V1 | Richards & Moore, ISEE, eqs. [6], [7a]-[7c] |
+| Lundborg, `FLY-LUNDBORG-MAX`, `FLY-LUNDBORG-Q` (`lundborg_max_range`, `lundborg_optimal_fragment`, `lundborg_range`) | Maximum range and optimal fragment size; range by powder factor | Diameter (mm), powder factor | V2 | As restated by Richards & Moore, McKenzie 2018 and Szendrei & Tose 2022; originals not read |
+| McKenzie 2018, `FLY-MCKENZIE-2018` (`mckenzie_max_range`) | Maximum range | SDoB (you supply it), diameter | V1 | McKenzie 2018 summary, slide 11, version 2018 only |
+| Roth, `FLY-ROTH-GURNEY`, `FLY-ROTH-CAL` (`roth_charge_mass_ratio`, `roth_gurney_velocity`, `roth_launch_velocity`, `roth_calibrated_velocity`, `roth_reference_gurney_velocity`) | Launch velocity from c/m and the Gurney velocity; calibrated equations | Linear charge, rock density, burden, detonation velocity | V1 | Roth 1979, USBM OFR 77-81, eqs. (7)-(10), (13), (13a), (14), (17) |
 
-`airblast.system_from_cutoff(low_cutoff_hz)` gives the system of a linear microphone. The limit depends on the lower
-cutoff because a level in dB is a peak of what the microphone passes: the lower the cutoff, the more low-frequency
-pressure it counts, so each system has its own limit.
+`flyrock.info(flyrock.Model.X)` gives the id, mark and citation of each one, and `compare` carries them in `attrs`.
 
-Published equations (`list_equations`, `published`, `predict_published`) are medians, without an upper bound, tied to
-the system they were fitted with. Fourteen come from RI 8485 Table B-1, two from the OSMRE BLEP and one from AS 2187.2.
+**Published critiques** (Szendrei & Tose 2022, JSAIMM 122(12), pp. 726-731, `attrs["critiques"]`): models without drag can overestimate the range by factors of 2 to 8; Lundborg holds for spherical fragments of the optimal size; McKenzie inherits Lundborg's calibration.
 
-| Equation id | System | Mark |
-|---|---|---|
-| `USBM-RI8485/coal-highwall/{0.1Hz,2Hz,5Hz,c-slow}` | as named | V1 |
-| `USBM-RI8485/coal-parting/{0.1Hz,2Hz,5Hz,c-slow}` | as named | V1 |
-| `USBM-RI8485/metal-mine-highwall/0.1Hz` | 0.1 Hz | V1 |
-| `USBM-RI8485/quarry/0.1Hz`, `quarry-direction-of-initiation`, `quarry-behind-face`, `quarry-opposite-initiation`, `quarry-front-of-face` | 0.1 Hz | V1 |
-| `OSMRE-BLEP/highwall`, `OSMRE-BLEP/parting` | not stated | V1 |
-| `AS2187.2-2006/free-face` | not stated | V2 |
-
-BLEP's two equations come from 0.1 Hz fits, but BLEP compares them with the 2 Hz limit; `evaluate_prediction` warns when
-the equation's system differs from the limit's. AS 2187.2 is [V2], from a single secondary source.
-
-Not included: wind correction, the Australian comfort limits and AS 2187.2 from the standard itself.
+**Not included, and why:** McKenzie (2009) coefficient and the SDoB definition (no source read defines it, so SDoB is yours to give), McKenzie's fragment size and minimum stemming, Roth's graphical curves and bench correlation, scaling Roth's calibrated equations to other explosives (the source does not state the rule and its printed factor looks inverted), drag trajectories, the shape of the clearance zone, and a hole-table file reader (pass a DataFrame; pandas already reads CSV and Excel).
 
 ## Conventions
 
