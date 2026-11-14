@@ -7,6 +7,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include "blastingpy/airblast.hpp"
 #include "blastingpy/attenuation.hpp"
 #include "blastingpy/criteria_curve.hpp"
 #include "blastingpy/least_squares.hpp"
@@ -41,11 +42,19 @@ NB_MODULE(_blastingpy_core, m) {
     u.attr("m_per_ft") = units::m_per_ft;
     u.attr("kg_per_lb") = units::kg_per_lb;
     u.attr("mm_per_in") = units::mm_per_in;
+    u.attr("pa_per_psi") = units::pa_per_psi;
     u.def("scaled_distance", &units::scaled_distance, nb::arg("distance_m"), nb::arg("charge_kg"),
           nb::arg("charge_exponent"), "Scaled distance D / W**e (distance in m, charge in kg).");
     u.def("convert_k_to_si", &units::convert_k_to_si, nb::arg("k_imperial"), nb::arg("beta"),
           nb::arg("charge_exponent"),
           "Convert K of v[in/s] = K (D[ft]/W[lb]**e)**-beta to the K of v[mm/s] with D in m and W in kg.");
+
+    nb::module_ ab = m.def_submodule("_airblast", "Airblast: Pa <-> dB and psi-ft-lb coefficient conversion.");
+    ab.attr("reference_pressure_pa") = airblast::reference_pressure_pa;
+    ab.def("pa_to_db", &airblast::pa_to_db, nb::arg("pressure_pa"), "Level in dB re 20 uPa: 20 log10(p/p0).");
+    ab.def("db_to_pa", &airblast::db_to_pa, nb::arg("level_db"), "Pressure in Pa from a level in dB re 20 uPa.");
+    ab.def("convert_k_to_si", &airblast::convert_k_to_si, nb::arg("k_psi"), nb::arg("beta"),
+           "Convert K of AB[psi] = K (D[ft]/W[lb]**(1/3))**-beta to the K of AB[Pa] with D in m and W in kg.");
 
     nb::module_ ls = m.def_submodule("_least_squares", "Ordinary least squares with 0, 1 or 2 predictors.");
     nb::class_<OlsResult>(ls, "OlsResult", "Coefficients (intercept first), SSE, sigma, dof, R2 and residuals of a fit.")

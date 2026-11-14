@@ -21,6 +21,7 @@ from types import MappingProxyType
 import numpy as np
 import pandas as pd
 
+from ._blastingpy_core import _units
 from .events import _AMBIGUOUS, _NUMBER, _decode, _number, _param_error, _read_csv
 
 CHANNEL_NAMES = ("transverse", "vertical", "longitudinal", "mic")
@@ -29,7 +30,7 @@ SOURCES = ("arrays", "instantel-thor", "instantel-blastware-table", "instantel-b
 FORMAT_EVIDENCE = ("user", "real-file", "third-party-parser", "manual-only")
 
 MM_PER_IN = 25.4
-PA_PER_PSI = 6894.757
+PA_PER_PSI = _units.pa_per_psi
 
 # Alias (minúsculas, sin espacios) -> nombre canónico. Los sufijos 1 son los nombres de la primera
 # unidad de los equipos de 8 canales.

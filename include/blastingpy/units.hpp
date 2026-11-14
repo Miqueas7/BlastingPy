@@ -17,6 +17,8 @@ namespace blastingpy::units {
 inline constexpr double m_per_ft = 0.3048;
 inline constexpr double kg_per_lb = 0.45359237;
 inline constexpr double mm_per_in = 25.4;
+/// psi -> Pa: definición (libra-fuerza / pulgada²); ninguna fuente del sprint 3 la imprime (inferido).
+inline constexpr double pa_per_psi = 6894.757;
 
 /// Distancia escalada SD = D / W^e, con D en m, W en kg y e el exponente de la carga
 /// (0.5 raíz cuadrada, 1/3 raíz cúbica). Unidades de salida: m/kg^e.

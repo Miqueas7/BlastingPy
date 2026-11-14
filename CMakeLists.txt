@@ -87,6 +87,7 @@ if(BLASTINGPY_BUILD_TESTS)
     add_executable(blastingpy_tests
         tests/cpp/test_validation.cpp
         tests/cpp/test_units.cpp
+        tests/cpp/test_airblast.cpp
         tests/cpp/test_least_squares.cpp
         tests/cpp/test_attenuation_fit.cpp
         tests/cpp/test_attenuation_inverse.cpp
