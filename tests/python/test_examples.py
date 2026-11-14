@@ -82,3 +82,22 @@ def test_flyrock_example(capsys):
             break
         table.append(line)
     assert len(table) == 6  # one row per hole, after the header and the index-name line
+
+
+EXAMPLE_5 = pathlib.Path(__file__).resolve().parents[2] / "examples" / "05-nearfield" / "nearfield.py"
+
+
+def test_nearfield_example(tmp_path, monkeypatch, capsys):
+    elsewhere = tmp_path / "cwd"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr(sys, "argv", [str(EXAMPLE_5), str(tmp_path / "out")])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # the library's warnings travel in the results, never as a UserWarning
+        runpy.run_path(str(EXAMPLE_5), run_name="__main__")
+    assert (tmp_path / "out" / "holmberg_persson.png").is_file()
+    assert not list(elsewhere.iterdir())  # nothing is written outside the directory given as argument
+    lines = capsys.readouterr().out.splitlines()
+    for start in ("Holmberg-Persson", "Heelan", "Monte Carlo"):
+        assert any(line.startswith(start) for line in lines), start
+    assert any(line.startswith("  warning:") for line in lines)  # the warnings the library returns are shown
