@@ -32,6 +32,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/Miqueas7/BlastingPy"
+Documentation = "https://miqueas.dev/blastingpy"
 Repository = "https://github.com/Miqueas7/BlastingPy"
 Issues = "https://github.com/Miqueas7/BlastingPy/issues"
 

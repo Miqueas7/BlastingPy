@@ -8,21 +8,27 @@ El caso de uso central: al terminar una campaña de monitoreo, el ingeniero de v
 carga máxima por retardo y verifica el resultado contra un criterio normativo, indicando la edición, la tabla, la
 magnitud y el método de frecuencia que usó.
 
-**Estado:** en desarrollo, sin publicar (versión 0.1.0). Los cinco bloques de la versión 0.1 están completos: tabla de
-eventos, ley de atenuación, carga máxima y veredicto de cumplimiento; lectura de registros del sismógrafo (forma de onda,
-PPV, suma vectorial, frecuencia); sobrepresión de aire; proyección de rocas (modelos publicados de alcance, comparación
-por pozo y distancia de despeje); y vibración en campo cercano (Holmberg-Persson, Heelan, simulación de la voladura
-completa y su Monte Carlo). El paquete no está en PyPI y el repositorio es privado.
+**Documentación: <https://miqueas.dev/blastingpy>** (guía, métodos, casos resueltos y referencia de la API, en español
+e inglés).
 
-## Instalación (desde el repositorio)
+**Estado:** versión 0.1.0, la primera publicada. Sus cinco bloques: tabla de eventos, ley de atenuación, carga máxima y
+veredicto de cumplimiento; lectura de registros del sismógrafo (forma de onda, PPV, suma vectorial, frecuencia);
+sobrepresión de aire; proyección de rocas (modelos publicados de alcance, comparación por pozo y distancia de despeje);
+y vibración en campo cercano (Holmberg-Persson, Heelan, simulación de la voladura completa y su Monte Carlo).
+
+## Instalación
+
+```bash
+python -m pip install "blastingpy[io,viz]"
+```
+
+Hay ruedas para Python 3.10 a 3.14 en Linux, Windows y macOS. Extras: `io` (leer y escribir `.xlsx`), `viz` (gráficos),
+`seismic` (lectores de ObsPy). Para compilar desde el repositorio (hacen falta un compilador de C++ y CMake):
 
 ```bash
 python -m pip install ".[test,io,viz]"
 python -m pytest tests/python -q
 ```
-
-Para compilar desde el código fuente hacen falta un compilador de C++ y CMake. Extras: `io` (leer y escribir `.xlsx`),
-`viz` (gráficos), `seismic` (lectores de ObsPy).
 
 ## Ejemplo
 
@@ -43,13 +49,13 @@ plotting.plot_compliance(events, "USBM-RI8507-1980", "appendix-b-drywall")
 ```
 
 `write_events_template("events.csv")` escribe la tabla en blanco. Hay una versión completa y ejecutable con datos
-sintéticos en [examples/01-site-law-and-compliance](examples/01-site-law-and-compliance/) (su README está en inglés).
+sintéticos en [examples/01-site-law-and-compliance](https://github.com/Miqueas7/BlastingPy/tree/main/examples/01-site-law-and-compliance/) (su README está en inglés).
 
 ## Desde un registro del sismógrafo
 
 `blastingpy.io` lee la forma de onda que exporta un sismógrafo; `blastingpy.waveform` la convierte en picos, suma
 vectorial y frecuencia, y en una fila de la tabla de eventos de las secciones anteriores. Los datos y su evidencia están
-en [docs/investigacion/FUENTES_SPRINT2.md](docs/investigacion/FUENTES_SPRINT2.md).
+en [docs/investigacion/FUENTES_SPRINT2.md](https://github.com/Miqueas7/BlastingPy/blob/main/docs/investigacion/FUENTES_SPRINT2.md).
 
 ```python
 from blastingpy import attenuation, criteria, io, waveform
@@ -60,7 +66,7 @@ law = attenuation.fit(events, law="sqrt")
 verdict = criteria.evaluate(events, "USBM-RI8507-1980", "appendix-b-drywall")
 ```
 
-Una versión completa y ejecutable con datos sintéticos está en [examples/02-waveform-to-events](examples/02-waveform-to-events/).
+Una versión completa y ejecutable con datos sintéticos está en [examples/02-waveform-to-events](https://github.com/Miqueas7/BlastingPy/tree/main/examples/02-waveform-to-events/).
 
 | Lector | `format_evidence` | Notas |
 |---|---|---|
@@ -104,7 +110,7 @@ que muestra el software de tu sismógrafo.
 
 `blastingpy.airblast` ajusta la ley del sitio a la sobrepresión pico, la compara con los límites de airblast y trae las
 ecuaciones publicadas. Los hechos, las páginas y las marcas están en
-[docs/investigacion/FUENTES_SPRINT3.md](docs/investigacion/FUENTES_SPRINT3.md).
+[docs/investigacion/FUENTES_SPRINT3.md](https://github.com/Miqueas7/BlastingPy/blob/main/docs/investigacion/FUENTES_SPRINT3.md).
 
 ```python
 from blastingpy import airblast, waveform
@@ -116,7 +122,7 @@ charge = airblast.max_charge(law, 400.0, limit.pressure_pa)
 verdict = airblast.evaluate(events, "OSMRE-30CFR816.67", system="2Hz")
 ```
 
-Una versión completa y ejecutable con datos sintéticos está en [examples/03-airblast](examples/03-airblast/).
+Una versión completa y ejecutable con datos sintéticos está en [examples/03-airblast](https://github.com/Miqueas7/BlastingPy/tree/main/examples/03-airblast/).
 
 - **Unidades.** Por dentro todo es Pa. `airblast.to_db` / `from_db` convierten con P0 = 20 µPa; `read_events(...,
   units={"pressure": "Pa" | "kPa" | "psi" | "dB"})` y `units.to_si` aceptan Pa, kPa y psi. Los eventos traen
@@ -163,7 +169,7 @@ No entran: la corrección por viento, los límites de confort australianos y AS 
 
 `blastingpy.flyrock` trae los modelos publicados de proyección de rocas, una tabla comparativa por pozo y la distancia de
 despeje. Los hechos, las páginas y las marcas están en
-[docs/investigacion/FUENTES_SPRINT4.md](docs/investigacion/FUENTES_SPRINT4.md).
+[docs/investigacion/FUENTES_SPRINT4.md](https://github.com/Miqueas7/BlastingPy/blob/main/docs/investigacion/FUENTES_SPRINT4.md).
 
 ```python
 import pandas as pd
@@ -177,7 +183,7 @@ clear = flyrock.clearance(worst, target="people", regulation="PE-DS024-2016-EM")
 print(clear.distance_m, clear.governs)
 ```
 
-Una versión completa y ejecutable, con una tabla de pozos sintética, está en [examples/04-flyrock](examples/04-flyrock/).
+Una versión completa y ejecutable, con una tabla de pozos sintética, está en [examples/04-flyrock](https://github.com/Miqueas7/BlastingPy/tree/main/examples/04-flyrock/).
 
 - **Ningún modelo trae margen de seguridad; `clearance` lo agrega:** factor 2 para equipos y 4 para personas (Richards y Moore), o un factor propio >= 1.
 - **Mínimo peruano:** DS 024-2016-EM art. 267 a), modificado por el DS 034-2023-EM: radio de 500 m cuando la roca puede proyectarse 360°, y en voladuras de banco al menos 500 m en la dirección en que la voladura lanza. Rige para la evacuación de los trabajadores (personas, no equipos); el resultado dice cuál manda, el modelo o el reglamento (`governs`). Reportar el mayor entre el alcance con factor y 500 m es una decisión de diseño, no el texto del reglamento.
@@ -208,7 +214,7 @@ Una versión completa y ejecutable, con una tabla de pozos sintética, está en 
 
 `blastingpy.nearfield` estima la vibración cerca de una carga (Holmberg-Persson, Heelan) y simula una voladura completa
 superponiendo una onda semilla, con un Monte Carlo sobre los retardos y las amplitudes. Los hechos, las páginas y las
-marcas están en [docs/investigacion/FUENTES_SPRINT5.md](docs/investigacion/FUENTES_SPRINT5.md).
+marcas están en [docs/investigacion/FUENTES_SPRINT5.md](https://github.com/Miqueas7/BlastingPy/blob/main/docs/investigacion/FUENTES_SPRINT5.md).
 
 ```python
 import pandas as pd
@@ -238,7 +244,7 @@ mc = nearfield.monte_carlo_blast(holes, (5.0, 120.0), seed, delay_sigma_s=0.002,
 print(mc.percentile(95), mc.probability_exceeding(25.0))
 ```
 
-Una versión completa y ejecutable con datos sintéticos está en [examples/05-nearfield](examples/05-nearfield/).
+Una versión completa y ejecutable con datos sintéticos está en [examples/05-nearfield](https://github.com/Miqueas7/BlastingPy/tree/main/examples/05-nearfield/).
 
 | Modelo | Qué estima | Entradas | Marca | Fuente leída |
 |---|---|---|---|---|
@@ -364,8 +370,18 @@ deja fuera, y por qué, al final de su sección ([Airblast](#airblast), [Flyrock
 normas UNE 22381, AS 2187.2, BS 6472-2, SS 4604866, SN 640312a y NBR 9653 no entran porque no se leyó ninguna fuente con
 sus fórmulas o valores. Tampoco la línea 1 de DIN 4150-3 ni los criterios del último piso, la curva de la Figura 1 de
 OSMRE ni la línea 1 de BS 7385-2 bajo 4 Hz. Tres formatos de sismógrafo (THOR, Blastware con encabezado e histograma) no
-están validados contra un archivo real. Detalle en [docs/CHANGELOG.md](docs/CHANGELOG.md).
+están validados contra un archivo real. Detalle en [docs/CHANGELOG.md](https://github.com/Miqueas7/BlastingPy/blob/main/docs/CHANGELOG.md).
+
+## Cómo citar
+
+Si BlastingPy te sirve en tu trabajo, cítala. GitHub muestra un botón «Cite this repository» armado desde
+[CITATION.cff](https://github.com/Miqueas7/BlastingPy/blob/main/CITATION.cff):
+
+> Quintanilla Ventura, M. (2026). *BlastingPy: blast vibration, airblast, flyrock and near-field analysis for mining*
+> (versión 0.1.0) [Software]. https://github.com/Miqueas7/BlastingPy
+
+Cada resultado registra además el método y la fuente que sigue (`MethodInfo`); cita también esa fuente original.
 
 ## Licencia
 
-MIT. Ver [LICENSE](LICENSE).
+MIT. Ver [LICENSE](https://github.com/Miqueas7/BlastingPy/blob/main/LICENSE).
