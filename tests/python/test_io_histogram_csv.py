@@ -375,3 +375,14 @@ def test_csv_missing_sample_in_long_record_is_error(tmp_path):
     text = "t,X\n" + "\n".join(f"{float(ti)!r},1.5" for ti in t) + "\n"
     with pytest.raises(ValueError, match="time_column.*uniform"):
         read_waveform_csv(_csv_file(tmp_path, text), columns={"transverse": "X"}, units=UNITS, time_column="t")
+
+
+def test_csv_time_rounded_to_microseconds_snaps_rate_and_pretrigger(tmp_path):
+    # R2: el ajuste da 1024.0000003 Hz y 0.2499999997 s; se redondean al entero y a la muestra entera, sin aviso.
+    n = 2048
+    t = np.round(np.arange(n) / FS - 0.25, 6)
+    x = np.round(np.sin(2 * np.pi * 20 * np.arange(n) / FS), 5)
+    text = "t,X\n" + "".join(f"{a:.6f},{float(b)!r}\n" for a, b in zip(t, x))
+    rec = read_waveform_csv(_csv_file(tmp_path, text), columns={"transverse": "X"}, units=UNITS, time_column="t")
+    assert rec.sample_rate_hz == 1024.0 and rec.pretrigger_s == 0.25
+    assert not any("snap" in w or "round" in w for w in rec.warnings)

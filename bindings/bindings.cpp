@@ -307,6 +307,18 @@ NB_MODULE(_blastingpy_core, m) {
         .def_ro("n", &nearfield::PressureSource::n)
         .def_ro("gamma_per_s", &nearfield::PressureSource::gamma_per_s);
     nb::class_<nearfield::Waveform>(nfd, "Waveform", "Particle velocity (mm/s) in the (radial, axial) frame of the hole.")
+        .def(
+            "__init__",
+            [](nearfield::Waveform* self, std::vector<double> radial_mm_s, std::vector<double> axial_mm_s) {
+                validation::require(radial_mm_s.size() == axial_mm_s.size(), "axial_mm_s",
+                                    "must have the same length as radial_mm_s",
+                                    static_cast<double>(axial_mm_s.size()));
+                for (double v : radial_mm_s) validation::require_finite(v, "radial_mm_s");
+                for (double v : axial_mm_s) validation::require_finite(v, "axial_mm_s");
+                new (self) nearfield::Waveform{std::move(radial_mm_s), std::move(axial_mm_s)};
+            },
+            nb::arg("radial_mm_s"), nb::arg("axial_mm_s"),
+            "A waveform of your own (mm/s), e.g. for vector_peak: two sequences of finite numbers of equal length.")
         .def_ro("radial_mm_s", &nearfield::Waveform::radial_mm_s)
         .def_ro("axial_mm_s", &nearfield::Waveform::axial_mm_s);
     nfd.def("pressure_function", &nearfield::pressure_function, nb::arg("source"), nb::arg("t_s"),
@@ -353,7 +365,8 @@ NB_MODULE(_blastingpy_core, m) {
             "its Blair (2008) weight. Not the Blair and Minchinton (2006) scaled Heelan model. r = 0 is not admitted "
             "(r must be > 0). The waveform exists only at the instants of t_s: if t_s ends before the last arrival the "
             "peak is truncated silently. Last arrival ~ max over the elements of |z_m - z_primer| / VOD + R_m / Vs "
-            "(R_m: distance from element m to the point); add the length of the pulse, about 30 / gamma.");
+            "(R_m: distance from element m to the point); add the length of the pulse, (n + 4 sqrt(n) + 2) / gamma, as "
+            "nearfield.heelan_ppv does.");
     nfd.def("vector_peak", &nearfield::vector_peak, nb::arg("waveform"),
             "Peak vector velocity max sqrt(radial^2 + axial^2) of a waveform (mm/s).");
     nfd.def("superpose", &nearfield::superpose, nb::arg("seed"), nb::arg("sample_rate_hz"), nb::arg("arrival_times_s"),
@@ -362,8 +375,8 @@ NB_MODULE(_blastingpy_core, m) {
             "ceil(max arrival * fs) + len(seed) + 1; an arrival between samples is spread linearly over its neighbours, "
             "and one within 1e-9 samples of a whole sample falls on it (9 * 0.001 s and 0.009 s give the same waveform). "
             "The linear spread is a low-pass filter: an arrival mid-sample lowers the peak of a component of frequency "
-            "f by 1 - cos(pi f / fs) (5 % at fs / 10, 28 % for 500 Hz at 2048 Hz), so a seed should be sampled at 10 "
-            "or more times its dominant frequency (nearfield.simulate_blast warns otherwise). "
+            "f by up to sin^2(pi f / fs) (9.5 % at fs / 10, 48 % for 500 Hz at 2048 Hz), so a seed should be sampled "
+            "at 10 or more times its dominant frequency (nearfield.simulate_blast warns otherwise). "
             "Empty vectors and a waveform of more than 1e8 samples are domain errors.");
     nfd.def("monte_carlo_peaks", &nearfield::monte_carlo_peaks, nb::arg("seed"), nb::arg("sample_rate_hz"),
             nb::arg("nominal_arrival_times_s"), nb::arg("amplitudes"), nb::arg("delay_sigma_s"), nb::arg("amplitude_cv"),

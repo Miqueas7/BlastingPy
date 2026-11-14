@@ -28,13 +28,16 @@ print()
 for message in table.attrs["warnings"]:
     print("  warning:", message)
 
-# 3. The blast's clearance is governed by its worst hole: the largest range across the models (max_model_m; ties go
-#    to the larger Richards & Moore range). The models disagree widely; choosing one is the engineer's decision.
+# 3. The blast's clearance is governed by its worst hole: the largest range across the hole-specific models
+#    (max_model_m; ties go to the larger Richards & Moore range). Lundborg's maximum depends only on the diameter, so it
+#    is the same for every hole: it is printed beside it as an upper envelope, not used to pick the worst hole. The
+#    models disagree widely; choosing one is the engineer's decision.
 worst = table.sort_values(["max_model_m", "rm_max_m"]).index[-1]
 range_m = float(table.loc[worst, "max_model_m"])
-rm_only = float(table.loc[worst, "rm_max_m"])
-print(f"Flyrock: the blast's clearance is governed by its worst hole, {worst}: largest range across the models "
-      f"{range_m:.0f} m (Richards & Moore {rm_only:.0f} m). Choosing the model is the engineer's decision.")
+envelope = float(table.loc[worst, "lundborg_max_m"])
+print(f"Flyrock: the blast's clearance is governed by its worst hole, {worst}: largest range across the hole-specific "
+      f"models {range_m:.0f} m (Lundborg's diameter-only maximum {envelope:.0f} m). Choosing the model is the "
+      "engineer's decision.")
 
 # 4. Clearance. The models have no safety margin; clearance adds it (people x4, equipment x2) and, for people,
 #    optionally the Peruvian minimum of 500 m. The result says which one governs.
@@ -47,8 +50,8 @@ for target in ("people", "equipment"):
             print("  note:", note)
 print("  note:", c.notes[0])
 print("  note:", c.notes[1])
-c = fr.clearance(rm_only, target="people", regulation="PE-DS024-2016-EM")
-print(f"For contrast, clearance people with the Richards & Moore only range of hole {worst} ({rm_only:.0f} m): "
+c = fr.clearance(envelope, target="people", regulation="PE-DS024-2016-EM")
+print(f"For contrast, clearance people with Lundborg's diameter-only maximum ({envelope:.0f} m): "
       f"{c.distance_m:.0f} m (governs: {c.governs})")
 print()
 

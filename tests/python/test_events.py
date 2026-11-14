@@ -350,3 +350,16 @@ def test_missing_openpyxl_is_not_a_domain_error(tmp_path, monkeypatch):
     with pytest.raises(ImportError) as info:
         read_events(p, columns=COLS, ppv_kind="vertical")
     assert not str(info.value).startswith("Domain error") and "openpyxl" in str(info.value)
+
+
+def test_ambiguous_and_thousands_messages_say_thousands_separators_are_not_accepted(tmp_path):
+    p = _csv(tmp_path, "Dist\tCarga\tPPV\n100\t20\t1,250\n", name="t.csv")
+    with pytest.raises(ValueError, match=r"'1,250' is ambiguous: thousands separators are not accepted "
+                                         r"\(write 1250\); if the comma is the decimal mark, pass decimal=','"):
+        read_events(p, columns=COLS, ppv_kind="vertical")
+    with pytest.raises(ValueError, match=r"'1,250'.*thousands separators are not accepted \(write 1250\)"):
+        read_events(p, columns=COLS, ppv_kind="vertical", decimal=".")
+    q = _csv(tmp_path, "Dist\tCarga\tPPV\n100\t20\t1.250\n", name="u.csv")
+    with pytest.raises(ValueError, match=r"thousands separators are not accepted \(write 1250\); if the point is "
+                                         r"the decimal mark, pass decimal='.'"):
+        read_events(q, columns=COLS, ppv_kind="vertical", decimal=",")

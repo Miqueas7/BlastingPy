@@ -719,8 +719,10 @@ def test_delay_sweep():
 
 
 def test_delay_sweep_warns_when_delays_look_like_milliseconds():
-    out = nfl.delay_sweep(seed_wave(), sample_rate_hz=FS, delays_s=[0.0, 5.0, 13.0])  # 5 and 13 ms typed as s
+    with pytest.warns(UserWarning, match="delays look like milliseconds") as caught:  # 5 and 13 ms typed as s
+        out = nfl.delay_sweep(seed_wave(), sample_rate_hz=FS, delays_s=[0.0, 5.0, 13.0])
     note = out.attrs["warnings"]
+    assert len(caught) == 1 and str(caught[0].message) == note[0] and caught[0].filename == __file__
     assert len(note) == 1 and "milliseconds" in note[0] and "13 s" in note[0] and "must be in seconds" in note[0]
     assert out["ratio_to_simultaneous"].tolist() == pytest.approx([1.0, 0.5, 0.5])
     assert nfl.delay_sweep(seed_wave(), sample_rate_hz=FS, delays_s=[0.0, 0.005, 1.0]).attrs["warnings"] == ()
@@ -739,3 +741,14 @@ def test_delay_sweep_from_a_record_and_domain():
         nfl.delay_sweep(seed_wave(), sample_rate_hz=FS, delays_s=[0.0], amplitude_ratio=0.0)
     with pytest.raises(ValueError, match=DOMAIN + " 'sample_rate_hz' is required"):
         nfl.delay_sweep(seed_wave(), delays_s=[0.0])
+
+
+def test_waveform_built_by_the_user_goes_to_vector_peak():
+    wave = nfl.Waveform(radial_mm_s=[3.0, 0.0, -1.0], axial_mm_s=[4.0, 2.0, 0.5])
+    assert wave.radial_mm_s == [3.0, 0.0, -1.0] and wave.axial_mm_s == [4.0, 2.0, 0.5]
+    assert nfl.vector_peak(wave) == 5.0
+    assert nfl.vector_peak(nfl.Waveform(np.array([1.0, -2.0]), np.zeros(2))) == 2.0
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter 'axial_mm_s'.*same length"):
+        nfl.Waveform([1.0, 2.0], [1.0])
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter 'radial_mm_s'.*finite"):
+        nfl.Waveform([1.0, math.nan], [1.0, 2.0])

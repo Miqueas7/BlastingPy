@@ -158,8 +158,9 @@ def plot_compliance(events, profile, criterion, ax=None):
     handles.append(Line2D([], [], linestyle="none", label=text))
     labels.append(text)
     ax.set(xscale="log", yscale="log", xlabel=xlabel, ylabel="PPV (mm/s)", title=f"{profile.profile_id}: {criterion}")
-    # Fuera de los ejes, para no tapar puntos; con ax propio, el usuario ajusta el margen (p. ej. bbox_inches="tight").
-    ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0, fontsize="small")
+    # Dentro de los ejes: fuera de ellos, con ax= en una grilla, tapaba los ejes vecinos. El marco semitransparente
+    # deja ver los puntos que queden debajo.
+    ax.legend(handles, labels, loc="best", fontsize="small", framealpha=0.7)
     if created:
         ax.figure.tight_layout()
     return ax

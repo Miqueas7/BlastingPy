@@ -65,7 +65,8 @@ import pandas as pd
 from ._blastingpy_core import _criteria_curve as _cc
 from .units import from_si, to_si
 
-__all__ = ["list_profiles", "load_profile", "evaluate", "max_charge_unmonitored", "Profile"]
+__all__ = ["list_profiles", "load_profile", "evaluate", "max_charge_unmonitored", "candidates", "Profile", "Criterion",
+           "Candidate"]
 
 _PREFIX = "Domain error [BlastingPy]"
 _QUANTITIES = ("component_max", "vector_sum", "vertical")

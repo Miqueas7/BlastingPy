@@ -72,7 +72,8 @@ def test_flyrock_example(capsys):
     flyrock = next(line for line in lines if line.startswith("Flyrock"))
     assert "governed by its worst hole" in flyrock and "engineer's decision" in flyrock
     assert any(line.startswith("Clearance") for line in lines)
-    assert any("Richards & Moore only" in line for line in lines)  # the contrast line
+    assert "Lundborg's diameter-only maximum" in flyrock  # R5: the envelope beside the hole-specific range
+    assert any(line.startswith("For contrast") and "Lundborg" in line for line in lines)  # the contrast line
     assert any("c/m = " in line and "e-0" in line for line in lines)
     assert "max_model_m" in next(line for line in lines if "rm_max_m" in line)
     start = next(i for i, line in enumerate(lines) if line.startswith("hole "))

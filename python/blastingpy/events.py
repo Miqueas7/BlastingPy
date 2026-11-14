@@ -65,6 +65,14 @@ _PREFIX = "Domain error [BlastingPy]"
 _IO_HINT = "openpyxl is required to read or write .xlsx files: pip install blastingpy[io]"
 
 
+def _other_mark(text: str) -> str:
+    """Why a number written with the other mark is rejected: thousands separators are never accepted."""
+    mark = "," if "," in text else "."
+    plain = f" (write {text.replace(mark, '')})" if _AMBIGUOUS.match(text) else ""
+    return (f"thousands separators are not accepted{plain}; if the {'comma' if mark == ',' else 'point'} is the "
+            f"decimal mark, pass decimal='{mark}'")
+
+
 def _param_error(name: str, message: str) -> ValueError:
     return ValueError(f"{_PREFIX}: parameter '{name}' {message}")
 
@@ -258,10 +266,13 @@ def read_events(source, *, columns: dict[str, str], units: str | dict[str, str] 
                     values.append(np.nan)
                     continue
                 cell = cells[canonical][i]
-                if decimal is None and isinstance(cell, str) and _AMBIGUOUS.match(cell.strip()):
-                    raise cell_error(canonical, i, f"{cell.strip()!r} is ambiguous: the mark may be a decimal or a "
-                                                   f"thousands separator. Pass decimal=',' or '.'")
+                text = cell.strip() if isinstance(cell, str) else None
+                if decimal is None and text is not None and _AMBIGUOUS.match(text):
+                    raise cell_error(canonical, i, f"{text!r} is ambiguous: {_other_mark(text)}")
                 number = _number(cell, decimal)
+                if number is None and text is not None and _NUMBER[None].match(text):  # la otra marca
+                    raise cell_error(canonical, i, f"{text!r} is not a number with decimal={decimal!r}: "
+                                                   f"{_other_mark(text)}")
                 if number is None or not np.isfinite(number):
                     raise cell_error(canonical, i, f"expected a number, received {cells[canonical][i]!r}. "
                                                 f"If the decimal mark is not what you expect, pass decimal=',' or '.'")

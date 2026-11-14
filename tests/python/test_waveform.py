@@ -379,3 +379,18 @@ def test_precision_warning_with_three_significant_figures_only():
     six = {k: (_round_sig(v, 6) if k != "mic" else v) for k, v in ch.items()}
     s = waveform.analyze(_record(six))
     assert not any(PRECISION in w for w in s.warnings)
+
+
+def test_fft_peak_in_the_lowest_bins_warns_to_use_the_zero_crossing_frequency():
+    # R3: tres pozos de 25 Hz cada 17 ms interfieren y el espectro lo domina la envolvente: 0.5 Hz en un registro de 2 s.
+    rec = blastingpy.datasets.synthetic_record(holes=3, delay_ms=17, frequency_hz=25)
+    with pytest.warns(UserWarning, match=r"envelope or a trend.*zero-crossing frequency"):
+        f, _ = waveform.fft_frequency(rec.channels["transverse"], rec.sample_rate_hz)
+    assert f == 0.5
+    summary = waveform.analyze(rec)
+    low = [w for w in summary.warnings if "envelope or a trend" in w]
+    assert len(low) == 1 and "'transverse'" in low[0] and "0.5 Hz" in low[0]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # una oscilación limpia no avisa
+        assert waveform.fft_frequency(_burst(1.0, 20.0), FS)[0] == pytest.approx(20.0, abs=1.0)
+    assert not any("envelope" in w for w in waveform.analyze(blastingpy.datasets.synthetic_record()).warnings)

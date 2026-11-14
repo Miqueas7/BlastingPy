@@ -149,6 +149,13 @@ def test_fit_skips_rows_without_airblast():
     assert law.n == 5 and law.k == pytest.approx(5000.0, rel=1e-9)
 
 
+def test_fit_skip_warning_is_singular_for_one_event():
+    events = _events()
+    events.loc[len(events)] = [300.0, 40.0, np.nan]
+    with pytest.warns(UserWarning, match=r"^1 event without a finite airblast_pa was skipped; .* the 5 rows used"):
+        airblast.fit(events)
+
+
 def test_fit_needs_three_rows():
     with pytest.raises(ValueError, match=DOMAIN + " 'airblast_pa'.*at least 3"):
         airblast.fit(_events().iloc[:2])

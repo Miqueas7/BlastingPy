@@ -75,7 +75,7 @@ from . import airblast
 from ._blastingpy_core import _nearfield as _nf
 from .attenuation import Law, Level, SiteLaw, predict_ppv
 from .io import Record
-from .waveform import fft_frequency
+from .waveform import _fft
 
 HpModel = _nf.HpModel
 hp_point = _nf.hp_point
@@ -140,7 +140,7 @@ _LONG_DELAY_S = 1.0
 _STEPS_PER_PULSE = 10.0  # heelan_ppv avisa si el paso pasa de 1/(10 gamma): elección de diseño (el automático es 1/40)
 # Más umbrales de diseño (revisión final; no vienen de una fuente). Una onda sísmica en roca no viaja a menos de
 # 100 m/s: por debajo, lo más probable es que esté en km/s. Con fs ≥ 10 veces la frecuencia dominante de la semilla,
-# el reparto lineal de una llegada entre dos muestras resta a lo más 1 − cos(π/10) ≈ 5 % del pico.
+# el reparto lineal de una llegada entre dos muestras resta a lo más sin²(π/10) ≈ 9,5 % del pico.
 _SLOW_WAVE_M_S = 100.0
 _SAMPLES_PER_PERIOD = 10.0
 _MIN_SCREENING = 0.2  # el piso de screening_factor (Blair 1999, p. 346): por debajo, S_n de la ec. 20 no tiene datos
@@ -346,12 +346,12 @@ def _seed(seed, sample_rate_hz) -> tuple[list[float], float, list[str]]:
     peak = float(np.abs(s).max())
     if peak == 0.0:
         raise _error("seed", "is zero everywhere: it cannot be normalized to unit peak")
-    dominant = fft_frequency(s, fs)[0] if s.size > 1 else math.nan  # NaN (semilla plana o de una muestra): sin aviso
+    dominant = _fft(s, fs)[0] if s.size > 1 else math.nan  # NaN (semilla plana o de una muestra): sin aviso
     if dominant > fs / _SAMPLES_PER_PERIOD:
-        loss = 1.0 - math.cos(math.pi * dominant / fs)
+        loss = math.sin(math.pi * dominant / fs) ** 2  # peor caso: el pico pasa a cos²(π f/fs)
         notes.append(_Loud(f"the seed's dominant frequency, {dominant:.4g} Hz, is above a tenth of its sample rate "
                            f"({fs / _SAMPLES_PER_PERIOD:g} Hz): an arrival between two samples is spread linearly over "
-                           f"them, which lowers its peak by up to 1 - cos(pi f / fs) = {loss:.0%} when it falls "
+                           f"them, which lowers its peak by up to sin^2(pi f / fs) = {loss:.0%} when it falls "
                            f"mid-sample; use a seed recorded at a higher sample rate (at least "
                            f"{_SAMPLES_PER_PERIOD * dominant:.0f} Hz)"))
     return (s / peak).tolist(), fs, notes
@@ -603,7 +603,7 @@ def simulate_blast(holes: pd.DataFrame, monitor: tuple[float, float], seed, *, s
     milliseconds), ``wave_velocity_m_s`` below 100 (it looks like km/s), an argument that the chosen weighting does
     not use (``spacing_m``, ``eta``, ``charge_exponent``), a seed taken from the ``"mic"`` channel and a seed whose
     dominant frequency is above a tenth of its sample rate (an arrival between two samples is spread linearly over
-    them, which lowers its peak by up to ``1 - cos(pi f / fs)``). It always says that the amplitudes are the law's
+    them, which lowers its peak by up to ``sin^2(pi f / fs)``). It always says that the amplitudes are the law's
     median, so about half of the holes exceed them. With ``"damage"`` it warns, with the rows, when a screening factor
     S_n is below 0.2 or a hole is closer than 99 m to the monitor: S_n has no floor and g was fitted with monitors
     at 99 m or more (Blair 1999, Fig. 7b), so those weights extrapolate the source. These last warnings (units, the
@@ -698,7 +698,7 @@ def monte_carlo_blast(holes: pd.DataFrame, monitor: tuple[float, float], seed, *
                            "exceeding a level come out too low. The coefficient of variation of a lognormal with that "
                            f"sigma is sqrt(exp((sigma ln 10)^2) - 1) = {cv:.3g}: pass amplitude_cv={cv:.3g} to "
                            "include it"))
-    peaks =np.asarray(_nf.monte_carlo_peaks(samples, fs, table["arrival_s"].tolist(), table["amplitude_mm_s"].tolist(),
+    peaks = np.asarray(_nf.monte_carlo_peaks(samples, fs, table["arrival_s"].tolist(), table["amplitude_mm_s"].tolist(),
                                              sigma.tolist(), amplitude_cv, int(simulations), int(rng_seed)))
     return MonteCarloResult(peaks, float(peaks.mean()), float(peaks.std(ddof=1)) if peaks.size > 1 else math.nan,
                             float(np.abs(_superposed(samples, fs, table)).max()),
@@ -716,8 +716,8 @@ def delay_sweep(seed, *, sample_rate_hz: float | None = None, delays_s, amplitud
 
     ``attrs["warnings"]`` is a tuple, empty unless an input looks wrong: a delay above 1 s (it looks like
     milliseconds), a seed taken from the ``"mic"`` channel or a seed whose dominant frequency is above a tenth of its
-    sample rate (an arrival between two samples is spread linearly over them and its peak drops; this one is also
-    emitted as a ``UserWarning``).
+    sample rate (an arrival between two samples is spread linearly over them and its peak drops). The delays in
+    milliseconds and the seed's frequency are also emitted as ``UserWarning``.
     """
     samples, fs, notes = _seed(seed, sample_rate_hz)
     ratio = _positive("amplitude_ratio", amplitude_ratio)
@@ -727,8 +727,8 @@ def delay_sweep(seed, *, sample_rate_hz: float | None = None, delays_s, amplitud
     if delays.size:
         _check_span("delays_s", float(delays.max()), fs, len(samples), "check that the delays are in seconds")
         if delays.max() > _LONG_DELAY_S:
-            notes.append(f"delays look like milliseconds: the longest delay is {delays.max():g} s and delays_s must "
-                         "be in seconds")
+            notes.append(_Loud(f"delays look like milliseconds: the longest delay is {delays.max():g} s and "
+                               "delays_s must be in seconds"))
     peaks = [float(np.abs(_nf.superpose(samples, fs, [0.0, delay], [1.0, ratio])).max()) for delay in delays.tolist()]
     out = pd.DataFrame({"delay_s": delays, "peak": peaks, "ratio_to_simultaneous": np.array(peaks) / (1.0 + ratio)})
     out.attrs["warnings"] = _emitted(notes)

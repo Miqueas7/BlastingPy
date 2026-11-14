@@ -49,7 +49,7 @@
  *   la descripción, la fuente no da la fórmula); las componentes (radial, axial) se suman directamente. r = 0 no se
  *   admite (el elemento de Heelan exige r > 0). La onda solo existe en los instantes de t_s: si el vector termina antes
  *   de la última llegada, el pico sale truncado SIN aviso. Última llegada ≈ máx sobre los elementos de
- *   |z_m − z_cebo|/VOD + R_m/Vs (R_m = distancia del elemento m al punto), más la duración del pulso, ~30/γ.
+ *   |z_m − z_cebo|/VOD + R_m/Vs (R_m = distancia del elemento m al punto), más la duración del pulso, (n + 4√n + 2)/γ.
  * - vector_peak: máx √(radial² + axial²) de la onda; el pico se toma siempre de la onda, nunca de G_n.
  *
  * Las entradas no admiten NaN ni infinito; los errores son de dominio (ver validation.hpp).
@@ -428,7 +428,7 @@ inline double vector_peak(const Waveform& waveform) {
 
 /// Velocidad (mm/s) de la columna en (r, z), r > 0: suma de elementos de Heelan iniciados a la VOD desde el cebo, cada
 /// uno con su peso de column_weights. t_s debe cubrir hasta la última llegada (máx |z_m − z_cebo|/VOD + R_m/Vs) más
-/// ~30/γ: si termina antes, el pico queda truncado sin aviso.
+/// (n + 4√n + 2)/γ, lo que dura el pulso: si termina antes, el pico queda truncado sin aviso.
 inline Waveform heelan_column(const PressureSource& source, const Medium& medium, const Column& column, double r,
                               double z, const std::vector<double>& t_s) {
     validation::require_positive(column.hole_radius_m, "hole_radius_m");
@@ -462,8 +462,9 @@ inline Waveform heelan_column(const PressureSource& source, const Medium& medium
 //   desde t = 0 (muestra i en t = i/fs); la llegada entre dos muestras reparte el impulso linealmente (inferido). Una
 //   llegada a menos de 1e-9 muestras de una muestra entera cae en ella (inferido): 9·0,001 s y 0,009 s a 1 kHz dan la
 //   misma onda. Más de 1e8 muestras es error de dominio (tiempos que no están en segundos). Efecto del reparto
-//   lineal: es un filtro pasabajos; una llegada a media muestra baja el pico de una componente de frecuencia f en
-//   1 − cos(π·f/fs) (5 % con f = fs/10, 28 % con 500 Hz a 2048 Hz). En el Monte Carlo las llegadas caen en
+//   lineal: es un filtro pasabajos; una llegada a media muestra baja el pico de una componente de frecuencia f hasta
+//   en sin²(π·f/fs) (9,5 % con f = fs/10, 48 % con 500 Hz a 2048 Hz): el pico pasa a la media de la muestra del pico
+//   y su vecina, (1 + cos(2π·f/fs))/2 = cos²(π·f/fs). En el Monte Carlo las llegadas caen en
 //   cualquier fracción de muestra, así que los picos simulados quedan por debajo del determinista. Conviene una
 //   semilla muestreada a 10 veces su frecuencia dominante o más (elección de diseño); la capa de Python avisa cuando
 //   no lo está.
@@ -520,7 +521,7 @@ inline bool output_fits(double last_position, std::size_t seed_samples) {
 }  // namespace detail
 
 /// v(t) = Σ_j w_j·s(t − d_j) muestreado a fs desde t = 0; largo = ceil(máx llegada·fs) + largo(semilla) + 1. Una
-/// llegada entre muestras se reparte linealmente: a media muestra baja el pico en 1 − cos(π·f/fs) (ver arriba).
+/// llegada entre muestras se reparte linealmente: a media muestra baja el pico hasta en sin²(π·f/fs) (ver arriba).
 inline std::vector<double> superpose(const std::vector<double>& seed, double sample_rate_hz,
                                      const std::vector<double>& arrival_times_s, const std::vector<double>& amplitudes) {
     validation::require(!seed.empty(), "seed", "must not be empty", 0.0);

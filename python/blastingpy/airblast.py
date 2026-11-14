@@ -92,9 +92,10 @@ def fit(events: pd.DataFrame, *, z: float = 2.0, outlier_z: float = 3.0) -> Site
     p = events["airblast_pa"].to_numpy(dtype=float)
     used = np.isfinite(p)
     if not used.all():
-        warnings.warn(f"{int((~used).sum())} events without a finite airblast_pa were skipped; outliers and residuals "
-                      f"refer to the {int(used.sum())} rows used: events[np.isfinite(events['airblast_pa'])]",
-                      UserWarning, stacklevel=2)
+        skipped = int((~used).sum())
+        what = "1 event without a finite airblast_pa was" if skipped == 1 else             f"{skipped} events without a finite airblast_pa were"
+        warnings.warn(f"{what} skipped; outliers and residuals refer to the {int(used.sum())} rows used: "
+                      "events[np.isfinite(events['airblast_pa'])]", UserWarning, stacklevel=2)
     d, w = (events[c].to_numpy(dtype=float)[used].tolist() for c in _COLUMNS[:2])
     return _core.fit_site_law(d, w, p[used].tolist(), Law.CubeRoot, z, outlier_z, _core.Quantity.Airblast)
 
@@ -304,9 +305,10 @@ def evaluate(events: pd.DataFrame, standard: str, *, system: str) -> pd.DataFram
     """Verdict of each event's ``airblast_pa`` against ``standard`` for the measuring ``system``.
 
     Returns a copy of ``events`` plus ``airblast_db``, ``limit_db``, ``margin_db`` (limit - measured), ``status``
-    (``complies``, ``exceeds``, ``indeterminate`` or ``not_comparable``) and ``reason``. A missing, non-finite or
-    <= 0 pressure is ``indeterminate``; with ``system="c-slow"`` every row is ``not_comparable`` (a linear peak is
-    not a C-slow level). ``attrs`` keeps the frame's own (``warnings``, ``notes``, ``format_evidence``) and adds the
+    (``complies``, ``exceeds``, ``indeterminate`` or ``not_comparable``) and ``reason``, with the meanings of
+    :func:`blastingpy.criteria.evaluate`: a missing (NaN) pressure is ``not_comparable`` and a pressure outside the
+    domain (<= 0 or infinite) is ``indeterminate``; with ``system="c-slow"`` every row is ``not_comparable`` (a
+    linear peak is not a C-slow level). ``attrs`` keeps the frame's own (``warnings``, ``notes``, ``format_evidence``) and adds the
     standard, system, limit, citation, verification and the limit's notes (``limit_notes``).
     """
     lim = limit_db(standard, system=system)
@@ -322,8 +324,11 @@ def evaluate(events: pd.DataFrame, standard: str, *, system: str) -> pd.DataFram
     out["margin_db"] = lim.level_db - db
     status = np.where(db > lim.level_db + _TOL, "exceeds", "complies").astype(object)
     reason = np.full(p.shape, "", dtype=object)
+    missing = np.isnan(p)
     status[~ok] = "indeterminate"
-    reason[~ok] = "airblast_pa is missing, not finite or <= 0"
+    reason[~ok] = "airblast_pa is outside the domain (<= 0 or infinite)"
+    status[missing] = "not_comparable"
+    reason[missing] = "no airblast value (airblast_pa is missing)"
     if lim.pressure_pa is None:
         status[:] = "not_comparable"
         reason[:] = "a linear peak pressure is not a C-slow level: it cannot be compared with this limit"
