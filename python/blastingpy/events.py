@@ -26,6 +26,7 @@ from __future__ import annotations
 import csv
 import importlib.resources
 import io
+import math
 import os
 import re
 import warnings
@@ -264,14 +265,21 @@ def read_events(source, *, columns: dict[str, str], units: str | dict[str, str] 
                 if number is None or not np.isfinite(number):
                     raise cell_error(canonical, i, f"expected a number, received {cells[canonical][i]!r}. "
                                                 f"If the decimal mark is not what you expect, pass decimal=',' or '.'")
-                if (canonical in _REQUIRED or canonical == "airblast_pa" and unit_names["pressure"] != "dB")                         and number <= 0:
+                is_db = canonical == "airblast_pa" and unit_names["pressure"] == "dB"
+                if (canonical in _REQUIRED or (canonical == "airblast_pa" and not is_db)) and number <= 0:
                     raise cell_error(canonical, i, f"expected a positive value, received {cells[canonical][i]!r}")
+                if is_db:
+                    try:
+                        number = _core.db_to_pa(number)
+                    except ValueError:
+                        number = math.nan
+                    if not np.isfinite(number):
+                        raise cell_error(canonical, i, f"the level {cells[canonical][i]!r} dB is out of range "
+                                                       f"(its pressure in Pa is not finite)")
                 values.append(number)
             array = np.array(values, dtype=float)
             quantity = _QUANTITY.get(canonical)
-            if canonical == "airblast_pa" and unit_names["pressure"] == "dB":
-                array = np.array([_core.db_to_pa(x) for x in array])  # NaN (celda vacía) sigue NaN
-            elif quantity:
+            if quantity and not (canonical == "airblast_pa" and unit_names["pressure"] == "dB"):
                 array = to_si(array, unit_names[quantity])
             out[canonical] = array
     return pd.DataFrame(out, columns=[c for c in _ORDER if c in out])

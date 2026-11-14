@@ -199,6 +199,13 @@ def test_airblast_non_positive_pa_psi_kpa_is_a_cell_error(tmp_path):
             _airblast_events(tmp_path, {"pressure": unit}, "Dist;Carga;PPV;AB\n100;10;1;1\n200;10;2;0\n")
 
 
+def test_airblast_db_empty_cell_is_nan_and_absurd_level_is_a_cell_error(tmp_path):
+    df = _airblast_events(tmp_path, {"pressure": "dB"}, "Dist;Carga;PPV;AB\n100;10;1;134\n200;10;2;\n")
+    assert df["airblast_pa"][0] == pytest.approx(100.24, rel=1e-4) and np.isnan(df["airblast_pa"][1])
+    with pytest.raises(ValueError, match=r"column 'AB' \(airblast_pa\), row 3"):
+        _airblast_events(tmp_path, {"pressure": "dB"}, "Dist;Carga;PPV;AB\n100;10;1;134\n200;10;2;10000\n")
+
+
 def test_unknown_pressure_unit(tmp_path):
     with pytest.raises(ValueError, match="unknown unit 'bar' for 'pressure'"):
         _airblast_events(tmp_path, {"pressure": "bar"})
