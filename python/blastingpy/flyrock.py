@@ -70,6 +70,7 @@ _DENSITY_KG_M3 = (300.0, 2000.0)
 _SDOB_SCALE_END = 2.4  # fin de la escala de SDoB que muestra McKenzie (2018), diaps. 7 y 12
 # Roth: aviso bajo 2·(b/a); el 2 es decisión de diseño (inferido): la fuente solo dice que cerca de b/a subestima
 _ROTH_NEAR_MINIMUM = 2.0
+_POWDER_SHARE = 0.5  # compare avisa cuando lundborg_q_m < 0,5 · lundborg_max_m (elección de diseño, R5)
 _POWDER_FACTOR = ("a powder-factor formula tends to underestimate the range (Roth 1979, USBM OFR 77-81, pp. 10-11, "
                   "29-31)")
 _SDOB_UNIT = ("SDoB must be in m/kg^(1/3), not ft/lb^(1/3): 2.4 is the end of the scaled-depth-of-burial scale shown "
@@ -255,10 +256,14 @@ def compare(holes: pd.DataFrame, *, k: float, g: float = standard_gravity) -> pd
     ``rm_face_burst_m``, ``rm_cratering_m``, ``rm_stemming_ejection_m`` (0 for a vertical hole), ``rm_max_m`` (larger of
     face burst and cratering; the cratering range bounds the stemming ejection, since sin 2 theta <= 1),
     ``lundborg_max_m``, ``lundborg_q_m`` (with ``powder_factor_kg_m3``), ``mckenzie_2018_m`` (with ``sdob_m_kg13``) and
-    ``max_model_m`` (the largest of the model ranges of the row, NaN ignored). ``attrs`` gets ``k``, ``g``, ``methods``
-    (column -> id, verification, citation), ``warnings`` (among them the rows where ``max_model_m`` is more than twice
-    ``rm_max_m``, where ``lundborg_q_m`` is below ``lundborg_max_m`` and where the SDoB looks like ft/lb^(1/3)) and
-    ``critiques``.
+    ``max_model_m``: the largest of the hole-specific ranges of the row (``rm_face_burst_m``, ``rm_cratering_m``,
+    ``rm_stemming_ejection_m``, ``lundborg_q_m``, ``mckenzie_2018_m``; NaN ignored). ``lundborg_max_m`` is not in it:
+    it depends only on the diameter (Lundborg's practical maximum, for the optimal fragment), so it is the same for
+    every hole of one diameter and does not tell which hole is the worst; it is the diameter-only upper envelope.
+    ``attrs`` gets ``k``, ``g``, ``methods`` (column -> id, verification, citation), ``warnings`` (among them the rows
+    where ``max_model_m`` is more than twice ``rm_max_m``, where ``lundborg_max_m`` is more than twice
+    ``max_model_m``, where ``lundborg_q_m`` is below half of ``lundborg_max_m`` and where the SDoB looks like
+    ft/lb^(1/3)) and ``critiques``.
     """
     if not isinstance(holes, pd.DataFrame):
         raise _error("holes", "must be a pandas DataFrame")
@@ -329,9 +334,11 @@ def compare(holes: pd.DataFrame, *, k: float, g: float = standard_gravity) -> pd
         q = _column(out, "powder_factor_kg_m3", allow_nan=True)
         out["lundborg_q_m"] = _per_row(out, "powder_factor_kg_m3", _nan_through(_fr.lundborg_range), d, q)
         methods["lundborg_q_m"] = _method(Model.LundborgRange)
-        below = out["lundborg_q_m"] < out["lundborg_max_m"]
+        # umbral de diseño (R5): por debajo de la mitad de lundborg_max_m; con solo «por debajo» avisaba en casi todo pozo
+        below = out["lundborg_q_m"] < _POWDER_SHARE * out["lundborg_max_m"]
         if below.any():
-            warns.append(f"lundborg_q_m is below lundborg_max_m: {_POWDER_FACTOR}; rows {list(out.index[below])}")
+            warns.append(f"lundborg_q_m is below half of lundborg_max_m: {_POWDER_FACTOR}; "
+                         f"rows {list(out.index[below])}")
     if "sdob_m_kg13" in out.columns:
         s = _column(out, "sdob_m_kg13", allow_nan=True)
         out["mckenzie_2018_m"] = _per_row(out, "sdob_m_kg13", _nan_through(_fr.mckenzie_max_range), s, d)
@@ -339,8 +346,14 @@ def compare(holes: pd.DataFrame, *, k: float, g: float = standard_gravity) -> pd
         feet = s > _SDOB_SCALE_END
         if feet.any():
             warns.append(f"sdob_m_kg13 above {_SDOB_SCALE_END}: {_SDOB_UNIT}; rows {list(out.index[feet])}")
-    ranges = [c for c in ("rm_max_m", "lundborg_max_m", "lundborg_q_m", "mckenzie_2018_m") if c in out.columns]
+    ranges = [c for c in ("rm_face_burst_m", "rm_cratering_m", "rm_stemming_ejection_m", "lundborg_q_m",
+                          "mckenzie_2018_m") if c in out.columns]
     out["max_model_m"] = out[ranges].max(axis=1)
+    envelope = out["lundborg_max_m"] > 2.0 * out["max_model_m"]
+    if envelope.any():
+        sizes = ", ".join(f"{v:.0f}" for v in sorted(set(out.loc[envelope, "lundborg_max_m"])))
+        warns.append(f"Lundborg's diameter-only maximum, {sizes} m, exceeds the hole-specific models (more than twice "
+                     f"max_model_m): the choice of model is the engineer's; rows {list(out.index[envelope])}")
     wide = out["max_model_m"] > 2.0 * out["rm_max_m"]
     if wide.any():
         warns.append("max_model_m is more than twice rm_max_m: the models disagree widely, and choosing one is the "

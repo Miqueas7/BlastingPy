@@ -97,6 +97,11 @@ if(BLASTINGPY_BUILD_TESTS)
         tests/cpp/test_waveform_derived.cpp
         tests/cpp/test_flyrock_ballistics.cpp
         tests/cpp/test_flyrock_models.cpp
+        tests/cpp/test_nearfield_hp.cpp
+        tests/cpp/test_nearfield_heelan.cpp
+        tests/cpp/test_nearfield_column.cpp
+        tests/cpp/test_nearfield_superposition.cpp
+        tests/cpp/test_nearfield_monte_carlo.cpp
     )
     target_link_libraries(blastingpy_tests PRIVATE
         blastingpy_core

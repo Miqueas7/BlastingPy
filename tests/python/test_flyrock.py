@@ -216,7 +216,8 @@ def test_mckenzie_sdob_in_feet_warns():
 
 def test_compare_max_model_and_disagreement():
     out = fl.compare(holes(sdob_m_kg13=[0.6, math.nan, 0.6], powder_factor_kg_m3=1.0), k=13.5)
-    cols = ["rm_max_m", "lundborg_max_m", "lundborg_q_m", "mckenzie_2018_m"]
+    # R5: solo los modelos propios del pozo; lundborg_max_m depende solo del diámetro y queda aparte
+    cols = ["rm_face_burst_m", "rm_cratering_m", "rm_stemming_ejection_m", "lundborg_q_m", "mckenzie_2018_m"]
     assert out["max_model_m"].tolist() == pytest.approx(out[cols].max(axis=1).tolist())
     over = list(out.index[out["max_model_m"] > 2 * out["rm_max_m"]])
     w = [x for x in out.attrs["warnings"] if "more than twice" in x]
@@ -244,3 +245,17 @@ def test_clearance_one_model_note_and_regulation_ignored():
     for kw in ({"range_m": True}, {"range_m": 95, "factor": True}):
         with pytest.raises(ValueError, match="Domain error"):
             fl.clearance(target="people", **kw)
+
+
+def test_compare_lundborg_envelope_is_apart_from_max_model():
+    out = fl.compare(holes(), k=13.5)
+    assert out["max_model_m"].tolist() == out["rm_max_m"].tolist()  # sin columnas opcionales: solo Richards y Moore
+    assert (out["lundborg_max_m"] > out["max_model_m"]).all()
+    over = list(out.index[out["lundborg_max_m"] > 2 * out["max_model_m"]])
+    w = [x for x in out.attrs["warnings"] if x.startswith("Lundborg's diameter-only maximum")]
+    assert over and len(w) == 1 and "905 m" in w[0] and "engineer's" in w[0] and str(over) in w[0]
+    assert not any("more than twice rm_max_m" in x for x in out.attrs["warnings"])
+    # el aviso del factor de carga solo cuando lundborg_q_m < 0.5 lundborg_max_m (743 m contra 905 m: no avisa)
+    out = fl.compare(holes(powder_factor_kg_m3=[1.0, 1.0, 0.25]), k=13.5)
+    w = [x for x in out.attrs["warnings"] if x.startswith("lundborg_q_m")]
+    assert len(w) == 1 and "[2]" in w[0] and "[0" not in w[0]

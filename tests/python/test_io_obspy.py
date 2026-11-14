@@ -137,3 +137,19 @@ def test_import_blastingpy_without_obspy():
     import subprocess
     code = "import sys; sys.modules['obspy'] = None; import blastingpy; blastingpy.io.read_obspy"
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+@pytest.mark.filterwarnings("ignore:Sample spacing read from SAC file")
+def test_sac_rounded_sample_rate(tmp_path):
+    # R1: SAC guarda el paso de muestreo redondeado; a 1024 Hz se lee ~1023.54 Hz. Nunca se adivina.
+    path, _ = _write(tmp_path, "SAC", fs=1024.0)
+    rec = read_obspy(path, channels=CODES, units={"geophone": "mm/s"})
+    assert rec.sample_rate_hz != 1024.0 and rec.sample_rate_hz == pytest.approx(1024.0, rel=1e-3)
+    note = [w for w in rec.warnings if "SAC stores the sample interval rounded" in w]
+    assert len(note) == 1 and "close to 1024 Hz" in note[0] and "pass sample_rate_hz=1024" in note[0]
+    rec = read_obspy(path, channels=CODES, units={"geophone": "mm/s"}, sample_rate_hz=1024)
+    assert rec.sample_rate_hz == 1024.0 and not any("SAC" in w for w in rec.warnings)
+    with pytest.raises(ValueError, match=r"parameter 'sample_rate_hz'.*1000.*1023.5"):
+        read_obspy(path, channels=CODES, units={"geophone": "mm/s"}, sample_rate_hz=1000)
+    mseed, _ = _write(tmp_path, "MSEED")  # 500 Hz exactos: sin aviso
+    assert not any("SAC" in w for w in read_obspy(mseed, channels=CODES, units={"geophone": "mm/s"}).warnings)

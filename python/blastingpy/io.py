@@ -22,7 +22,10 @@ import numpy as np
 import pandas as pd
 
 from ._blastingpy_core import _units
-from .events import _AMBIGUOUS, _NUMBER, _decode, _number, _param_error, _read_csv
+from .events import _AMBIGUOUS, _NUMBER, _decode, _number, _other_mark, _param_error, _read_csv
+
+__all__ = ["Record", "from_arrays", "infer_units", "read_instantel_ascii", "read_instantel_histogram",
+           "read_waveform_csv", "read_obspy"]
 
 CHANNEL_NAMES = ("transverse", "vertical", "longitudinal", "mic")
 SOURCES = ("arrays", "instantel-thor", "instantel-blastware-table", "instantel-blastware-blocks",
@@ -50,6 +53,14 @@ _MIC_UNITS = {"pa": 1.0, "psi": PA_PER_PSI, "db": None}  # dB no es una forma de
 # (0,00031 in/s) en Micromate y Minimate Pro; micrófono lineal 0,0156 Pa (Micromate) y 0,0155 Pa
 # (Minimate Pro), ambos = 0,015625 Pa, cubiertos por la tolerancia de ±3 %.
 _RES_TOLERANCE = 0.03
+# Tolerancia de la frecuencia de muestreo de un archivo frente a la que da el usuario (elección de diseño, R1): SAC
+# redondea el paso al microsegundo, y a 1024 Hz eso es 0,05 %.
+_RATE_TOLERANCE = 1e-3
+# Redondeo del ajuste de una columna de tiempo (R2, elección de diseño): por debajo de 1e-6 relativo en fs y de 1e-3
+# periodos de muestreo en el predisparo (a 1024 sps, ~1 µs, la resolución de tiempos con 6 decimales) la diferencia
+# no se ve en el archivo y no se avisa.
+_SNAP = 1e-6
+_SNAP_SAMPLE = 1e-3
 _RES_GEOPHONE = (("mm/s", 0.00788), ("in/s", 0.00031))
 _RES_MIC = (("Pa", 0.0156),)
 
@@ -716,7 +727,7 @@ def read_instantel_ascii(path, *, sample_rate_hz: float | None = None, units: Ma
 
 def read_obspy(path, *, channels: Mapping[str, str], units: Mapping[str, str],
                counts_per_unit: Mapping[str, float] | None = None,
-               pretrigger_s: float | None = None) -> Record:
+               pretrigger_s: float | None = None, sample_rate_hz: float | None = None) -> Record:
     """Read a miniSEED or SAC file (anything ``obspy.read`` understands) into a :class:`Record`.
 
     Needs the optional dependency ObsPy: ``pip install blastingpy[seismic]``.
@@ -731,6 +742,11 @@ def read_obspy(path, *, channels: Mapping[str, str], units: Mapping[str, str],
     All selected traces must share the sample rate (relative 1e-9), the start time (within half a
     sample period) and the length. ``Record.start`` is the first sample's time of the first selected
     trace (not the trigger time), as a naive ``datetime`` in UTC. ``format_evidence`` is ``"user"``: the calibration is the caller's.
+
+    The sample rate is never guessed. SAC stores the sample interval rounded, so a 1024 Hz SAC reads as about
+    1023.54 Hz: when the file's rate is within 0.1 % of a whole number but not equal to it, the record carries a
+    warning that names the whole number. Pass ``sample_rate_hz`` (the instrument's rate) to use it instead; it must
+    agree with the file within 0.1 %, else ``ValueError``.
     """
     try:
         import obspy
@@ -768,9 +784,19 @@ def read_obspy(path, *, channels: Mapping[str, str], units: Mapping[str, str],
             raise _param_error("channels", f"must all have the same length; '{first_name}' has "
                                f"{first.stats.npts} samples and '{name}' has {tr.stats.npts}")
 
+    warns: list[str] = []
+    whole = round(fs)
+    if sample_rate_hz is not None:
+        if not _real(sample_rate_hz) or abs(sample_rate_hz - fs) > _RATE_TOLERANCE * fs:
+            raise _param_error("sample_rate_hz", f"is {sample_rate_hz!r} Hz but the file gives {fs:g} Hz; they must "
+                               "agree within 0.1 %")
+        fs = float(sample_rate_hz)
+    elif fs != whole and abs(fs - whole) <= _RATE_TOLERANCE * fs:
+        warns.append(f"the file's sample rate is {fs:.6g} Hz, close to {whole} Hz: SAC stores the sample interval "
+                     f"rounded; pass sample_rate_hz={whole} if that is the instrument's rate")
     data = {name: np.asarray(tr.data, dtype=np.float64) / sens.get(name, 1.0) for name, tr in picked.items()}
     return _make_record(data, fs, units=units, pretrigger_s=pretrigger_s, start=first.stats.starttime.datetime,
-                        metadata=None, source="obspy", format_evidence="user", warnings=[])
+                        metadata=None, source="obspy", format_evidence="user", warnings=warns)
 
 
 # --------------------------------------------------------------------------- histograma de Instantel
@@ -919,9 +945,11 @@ def _csv_column(cells, label: str, name: str, decimal) -> np.ndarray:
         if text == "":
             raise _param_error("path", f"has an empty cell in {where}")
         if decimal is None and _AMBIGUOUS.match(text):
-            raise _param_error("path", f"has '{text}' in {where}, which is ambiguous: the mark may be a decimal or "
-                               "a thousands separator; pass decimal=',' or '.'")
+            raise _param_error("path", f"has '{text}' in {where}, which is ambiguous: {_other_mark(text)}")
         number = _number(text, decimal, scientific=True)
+        if number is None and _NUMBER[None].match(text):  # escrito con la otra marca
+            raise _param_error("path", f"has '{text}' in {where}, which is not a number with decimal={decimal!r}: "
+                               f"{_other_mark(text)}")
         if number is None or not np.isfinite(number):
             raise _param_error("path", f"has a value that is not a number in {where}: received '{text}'; if the "
                                "decimal mark is not what you expect, pass decimal=',' or '.'")
@@ -948,6 +976,8 @@ def _time_axis(t: np.ndarray, sample_rate_hz, pretrigger_s) -> tuple[float, floa
         raise _param_error("time_column", f"must have a uniform step: the time at row {k + 2} is "
                            f"{resid[k] / step:.2g} steps away from the fitted straight line (tolerance 0.25 step)")
     fs = 1.0 / step
+    if abs(fs - round(fs)) <= _SNAP * fs:  # R2: tiempos redondeados dan 1024.0000003 Hz; el resto es ruido del ajuste
+        fs = float(round(fs))
     if sample_rate_hz is not None:
         if not _real(sample_rate_hz) or abs(sample_rate_hz - fs) > 1e-3 * fs:
             raise _param_error("sample_rate_hz", f"is {sample_rate_hz!r} but the time column gives {fs:g} Hz; "
@@ -962,6 +992,9 @@ def _time_axis(t: np.ndarray, sample_rate_hz, pretrigger_s) -> tuple[float, floa
         if t0 > half:
             warns.append(f"the first sample is at t = {t0:g} s: the time axis is shifted to start at 0 and "
                          "pretrigger_s is 0.0")
+    whole = round(pre * fs)
+    if abs(pre * fs - whole) <= _SNAP_SAMPLE:  # R2: a la muestra entera si está a menos de 1e-3 de periodo
+        pre = whole / fs
     if pretrigger_s is not None:
         if not _real(pretrigger_s) or abs(pretrigger_s - pre) > half:
             raise _param_error("pretrigger_s", f"is {pretrigger_s!r} s but the time column gives {pre:g} s; "
@@ -981,7 +1014,9 @@ def read_waveform_csv(path, *, columns: Mapping[str, str], units: Mapping[str, s
 
     With ``time_column`` a straight line ``t = t0 + i / fs`` is fitted by least squares (so times rounded to a few
     decimals are fine) and every time must lie within a quarter step of it, else ``ValueError``; a negative fitted
-    ``t0`` gives ``pretrigger_s = -t0``, ``t0`` near 0 gives 0.0 and ``t0 > 0`` gives 0.0 with a warning. Numbers may
+    ``t0`` gives ``pretrigger_s = -t0``, ``t0`` near 0 gives 0.0 and ``t0 > 0`` gives 0.0 with a warning. A fitted
+    rate within 1e-6 (relative) of a whole number is taken as that number, and a pretrigger within 1e-3 of a sample
+    period of a whole number of samples as that time (times rounded to the microsecond give 1024.0000003 Hz). Numbers may
     use scientific notation (``1e-05``). An explicit ``sample_rate_hz`` or
     ``pretrigger_s`` must agree with the time column. Without it, ``sample_rate_hz`` is required (never guessed).
 

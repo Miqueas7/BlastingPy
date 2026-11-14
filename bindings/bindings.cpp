@@ -14,6 +14,7 @@
 #include "blastingpy/flyrock.hpp"
 #include "blastingpy/least_squares.hpp"
 #include "blastingpy/method_info.hpp"
+#include "blastingpy/nearfield.hpp"
 #include "blastingpy/units.hpp"
 #include "blastingpy/waveform.hpp"
 
@@ -260,4 +261,167 @@ NB_MODULE(_blastingpy_core, m) {
            nb::arg("method"), "Peak |dV/dt| (mm/s^2) of a velocity record (mm/s) and its sample index.");
     wf.def("peak_displacement", &peak_displacement, nb::arg("velocity_mm_s"), nb::arg("sample_rate_hz"),
            "Peak displacement (mm): largest complete half-cycle sum(V dt), halved; value is NaN if none is complete.");
+
+    nb::module_ nfd = m.def_submodule(
+        "_nearfield", "Near field: Holmberg-Persson (original integral and NIOSH modified form), damage extent and "
+                      "critical PPV. PPV in the unit K carries (mm/s with the published constants, kg and m).");
+    nb::enum_<nearfield::HpModel>(nfd, "HpModel", "Holmberg-Persson form.")
+        .value("Original", nearfield::HpModel::Original, "integral with alpha outside (NIOSH eq. 5)")
+        .value("Niosh", nearfield::HpModel::Niosh, "K (q L)^alpha / mean distance^beta (NIOSH eq. 8)");
+    nfd.def("hp_point", &nearfield::hp_point, nb::arg("k"), nb::arg("alpha"), nb::arg("beta"), nb::arg("charge_kg"),
+            nb::arg("distance_m"), "K Q^alpha / R^beta (NIOSH eq. 1).");
+    nfd.def("hp_term", &nearfield::hp_term, nb::arg("linear_charge_kg_m"), nb::arg("z_start"), nb::arg("z_end"),
+            nb::arg("r"), nb::arg("z"),
+            "Closed form (l/r)[atan((z_end - z)/r) + atan((z - z_start)/r)], valid for beta = 2 alpha.");
+    nfd.def("hp_original", &nearfield::hp_original, nb::arg("k"), nb::arg("alpha"), nb::arg("beta"),
+            nb::arg("linear_charge_kg_m"), nb::arg("z_start"), nb::arg("z_end"), nb::arg("r"), nb::arg("z"),
+            "K [l int dz' / (r^2 + (z' - z)^2)^(beta / (2 alpha))]^alpha (NIOSH eq. 5). "
+            "Raises on the axis inside the charged span.");
+    nfd.def("hp_mean_distance", &nearfield::hp_mean_distance, nb::arg("z_start"), nb::arg("z_end"), nb::arg("r"),
+            nb::arg("z"), "NIOSH mean distance (eq. 9).");
+    nfd.def("hp_niosh", &nearfield::hp_niosh, nb::arg("k"), nb::arg("alpha"), nb::arg("beta"),
+            nb::arg("linear_charge_kg_m"), nb::arg("z_start"), nb::arg("z_end"), nb::arg("r"), nb::arg("z"),
+            "K (l L)^alpha / mean distance^beta (NIOSH eq. 8).");
+    nfd.def("hp_damage_extent", &nearfield::hp_damage_extent, nb::arg("model"), nb::arg("k"), nb::arg("alpha"),
+            nb::arg("beta"), nb::arg("linear_charge_kg_m"), nb::arg("z_start"), nb::arg("z_end"), nb::arg("z"),
+            nb::arg("ppv_limit_mm_s"),
+            "Radial distance where the PPV falls to the limit at height z; NaN if it never does.");
+    nfd.def("ppv_critical", &nearfield::ppv_critical, nb::arg("tensile_strength_pa"), nb::arg("p_velocity_m_s"),
+            nb::arg("youngs_modulus_pa"),
+            "T Vp / E in mm/s, T and E in Pa, Vp in m/s [V2]: Onederra and Esen (2004), Fragblast 8(2), eq. 11, p. 69, "
+            "citing Persson, Holmberg and Lee (1994), Rock Blasting and Explosives Engineering, CRC, p. 247, which "
+            "was not read. Pass the static E (inferred: it reproduces the source's Table 1).");
+
+    nb::class_<nearfield::Medium>(nfd, "Medium", "Elastic medium: P and S velocities (m/s), density (kg/m3); mu = rho Vs^2.")
+        .def(nb::init<double, double, double>(), nb::arg("p_velocity_m_s"), nb::arg("s_velocity_m_s"),
+             nb::arg("density_kg_m3"))
+        .def_ro("p_velocity_m_s", &nearfield::Medium::p_velocity_m_s)
+        .def_ro("s_velocity_m_s", &nearfield::Medium::s_velocity_m_s)
+        .def_ro("density_kg_m3", &nearfield::Medium::density_kg_m3);
+    nb::class_<nearfield::PressureSource>(
+        nfd, "PressureSource",
+        "Blair (2007) eq. 8 pressure s(t) = P_VN (e gamma / n)^n t^n exp(-gamma t): von Neumann pressure (Pa), "
+        "integer n (2 to 20) and decay gamma (1/s).")
+        .def(nb::init<double, int, double>(), nb::arg("vn_pressure_pa"), nb::arg("n"), nb::arg("gamma_per_s"))
+        .def_ro("vn_pressure_pa", &nearfield::PressureSource::vn_pressure_pa)
+        .def_ro("n", &nearfield::PressureSource::n)
+        .def_ro("gamma_per_s", &nearfield::PressureSource::gamma_per_s);
+    nb::class_<nearfield::Waveform>(nfd, "Waveform", "Particle velocity (mm/s) in the (radial, axial) frame of the hole.")
+        .def(
+            "__init__",
+            [](nearfield::Waveform* self, std::vector<double> radial_mm_s, std::vector<double> axial_mm_s) {
+                validation::require(radial_mm_s.size() == axial_mm_s.size(), "axial_mm_s",
+                                    "must have the same length as radial_mm_s",
+                                    static_cast<double>(axial_mm_s.size()));
+                for (double v : radial_mm_s) validation::require_finite(v, "radial_mm_s");
+                for (double v : axial_mm_s) validation::require_finite(v, "axial_mm_s");
+                new (self) nearfield::Waveform{std::move(radial_mm_s), std::move(axial_mm_s)};
+            },
+            nb::arg("radial_mm_s"), nb::arg("axial_mm_s"),
+            "A waveform of your own (mm/s), e.g. for vector_peak: two sequences of finite numbers of equal length.")
+        .def_ro("radial_mm_s", &nearfield::Waveform::radial_mm_s)
+        .def_ro("axial_mm_s", &nearfield::Waveform::axial_mm_s);
+    nfd.def("pressure_function", &nearfield::pressure_function, nb::arg("source"), nb::arg("t_s"),
+            "Blair (2007) eq. 8 pressure (Pa) at t_s (s); its maximum is P_VN at t = n / gamma; 0 for t < 0.");
+    nfd.def("g_function", &nearfield::g_function, nb::arg("n"), nb::arg("tau"),
+            "Blair (2007) eq. 15: second derivative of tau^n exp(-tau); 0 for tau < 0.");
+    nfd.def("g_peak", &nearfield::g_peak, nb::arg("n"),
+            "G_n, the largest POSITIVE value of g(tau). Not the peak of |g|: for n >= 7 the negative trough is larger "
+            "in modulus (n = 8: -767.83 vs 680.17), so never use G_n a / r as a PPV; take the peak of the waveform.");
+    nfd.def("mean_frequency_factor", &nearfield::mean_frequency_factor, nb::arg("n"),
+            "c = omega_A / gamma (Blair 2007 eqs. 10-12; closed form inferred): 0.5, 0.375, 0.3125 for n = 4, 6, 8.");
+    nfd.def("scaled_frequency", &nearfield::scaled_frequency, nb::arg("source"), nb::arg("medium"),
+            nb::arg("hole_radius_m"), "Omega_A = c gamma a / Vp (Blair 2007); Heelan holds for Omega_A <~ 0.1.");
+    nfd.def("heelan_amplitude", &nearfield::heelan_amplitude, nb::arg("source"), nb::arg("medium"),
+            nb::arg("hole_radius_m"), nb::arg("half_length_m"),
+            "F(gamma) = gamma^2 a L P_VN (e/n)^n / (2 mu Vp) in mm/s (Blair 2007 eq. 16); L is the half length.");
+    nfd.def("heelan_element", &nearfield::heelan_element, nb::arg("source"), nb::arg("medium"),
+            nb::arg("hole_radius_m"), nb::arg("half_length_m"), nb::arg("r"), nb::arg("z"), nb::arg("t_s"),
+            "Velocity (mm/s) radiated by a short charge element centred at the origin (Heelan 1953 with the Blair "
+            "2007 source): P along R from R / Vp, SV perpendicular from R / Vs; phi = arccos(-z / R). "
+            "`hole_radius_m` is the hole radius (Blair); Heelan defines it as the equivalent cavity radius.");
+
+    nb::class_<nearfield::Column>(
+        nfd, "Column",
+        "Charge column between z_bottom and z_top (m), split into `elements` equal elements (odd); the primer is "
+        "element `primer_element` counted from the bottom (1 = bottom priming); VOD in m/s; charge exponent A in (0, 1].")
+        .def(nb::init<double, double, double, int, int, double, double>(), nb::arg("hole_radius_m"),
+             nb::arg("z_bottom"), nb::arg("z_top"), nb::arg("elements"), nb::arg("primer_element"), nb::arg("vod_m_s"),
+             nb::arg("charge_exponent"))
+        .def_ro("hole_radius_m", &nearfield::Column::hole_radius_m)
+        .def_ro("z_bottom", &nearfield::Column::z_bottom)
+        .def_ro("z_top", &nearfield::Column::z_top)
+        .def_ro("elements", &nearfield::Column::elements)
+        .def_ro("primer_element", &nearfield::Column::primer_element)
+        .def_ro("vod_m_s", &nearfield::Column::vod_m_s)
+        .def_ro("charge_exponent", &nearfield::Column::charge_exponent);
+    nfd.def("column_weights", &nearfield::column_weights, nb::arg("elements"), nb::arg("primer_element"),
+            nb::arg("charge_exponent"),
+            "Blair (2008) non-linear superposition weights E_m w_e^(-A), bottom element first (eqs. 1-2 and 22); "
+            "they sum to elements^A; A = 1 gives all ones. A must be within (0, 1].");
+    nfd.def("heelan_column", &nearfield::heelan_column, nb::arg("source"), nb::arg("medium"), nb::arg("column"),
+            nb::arg("r"), nb::arg("z"), nb::arg("t_s"),
+            "Velocity (mm/s) of a charge column: Heelan elements initiated from the primer at the VOD, each scaled by "
+            "its Blair (2008) weight. Not the Blair and Minchinton (2006) scaled Heelan model. r = 0 is not admitted "
+            "(r must be > 0). The waveform exists only at the instants of t_s: if t_s ends before the last arrival the "
+            "peak is truncated silently. Last arrival ~ max over the elements of |z_m - z_primer| / VOD + R_m / Vs "
+            "(R_m: distance from element m to the point); add the length of the pulse, (n + 4 sqrt(n) + 2) / gamma, as "
+            "nearfield.heelan_ppv does.");
+    nfd.def("vector_peak", &nearfield::vector_peak, nb::arg("waveform"),
+            "Peak vector velocity max sqrt(radial^2 + axial^2) of a waveform (mm/s).");
+    nfd.def("superpose", &nearfield::superpose, nb::arg("seed"), nb::arg("sample_rate_hz"), nb::arg("arrival_times_s"),
+            nb::arg("amplitudes"),
+            "v(t) = sum_j w_j s(t - d_j) (Hinzen 1988 eqs. 3 and 7; Blair 1999 eq. 1a), sampled from t = 0; length = "
+            "ceil(max arrival * fs) + len(seed) + 1; an arrival between samples is spread linearly over its neighbours, "
+            "and one within 1e-9 samples of a whole sample falls on it (9 * 0.001 s and 0.009 s give the same waveform). "
+            "The linear spread is a low-pass filter: an arrival mid-sample lowers the peak of a component of frequency "
+            "f by up to sin^2(pi f / fs) (9.5 % at fs / 10, 48 % for 500 Hz at 2048 Hz), so a seed should be sampled "
+            "at 10 or more times its dominant frequency (nearfield.simulate_blast warns otherwise). "
+            "Empty vectors and a waveform of more than 1e8 samples are domain errors.");
+    nfd.def("monte_carlo_peaks", &nearfield::monte_carlo_peaks, nb::arg("seed"), nb::arg("sample_rate_hz"),
+            nb::arg("nominal_arrival_times_s"), nb::arg("amplitudes"), nb::arg("delay_sigma_s"), nb::arg("amplitude_cv"),
+            nb::arg("simulations"), nb::arg("rng_seed"),
+            "Peak |v| of each simulation of the superposed seed (Blair 1999 eq. 1b) with w_jp = w_j (1 + c z') (eq. 7) "
+            "and d_jp = d_j + sigma_j z, z and z' standard normal. Eq. 9 only defines the nominal time d_j; the normal "
+            "delay scatter is a design choice (the source publishes no delay distribution), supported by Blair (1999, "
+            "sec. 5, eqs. 17-19), who models the time of each hole as normal(mu_j, sigma_j). Times are NOT clipped: when "
+            "the earliest arrival of a simulation is negative, all its arrivals are shifted by ceil(-min * fs) whole "
+            "samples, which leaves the peak unchanged, so the peaks do not depend on the time origin. A negative "
+            "amplitude factor is clipped to 0. Domain error if the nominal times plus 10 sigma would need more than 1e8 "
+            "samples. Same rng_seed -> same peaks on every platform to about 1e-9 relative, not bit for bit (log, cos "
+            "and sin round differently between libraries, and the compiler may contract a * b + c into an FMA).");
+    nfd.def("screening_factor", &nearfield::screening_factor, nb::arg("distance_m"), nb::arg("screening_count"),
+            nb::arg("g") = 23337.0, nb::arg("floor") = 0.2,
+            "S = max(floor, 1 / (1 + g h^-2 sqrt(N_S))) (Blair 1999 eqs. 10b-10c); g in m^2 (inferred). The floor of "
+            "0.2 is the author's, for lack of near-field data.");
+    nfd.def("screening_counts", &nearfield::screening_counts, nb::arg("x"), nb::arg("y"), nb::arg("firing_times_s"),
+            nb::arg("monitor_x"), nb::arg("monitor_y"), nb::arg("spacing_m"),
+            "N_S of each hole: holes fired earlier whose centre lies in the rectangle (width = spacing, centred on the "
+            "line) between the hole and the monitor (Blair 1999 Fig. 7a). Results in input order. Fired earlier means "
+            "t_s < t_n - 1e-9 s (the time tolerance): holes with the same nominal time do not count for each other. The "
+            "edges of the rectangle count (a design choice), and a hole beyond the monitor does not (unlike in "
+            "damage_weights). Domain error if the monitor coincides with a hole or two holes share a position.");
+    nfd.def("charge_scaling_weights", &nearfield::charge_scaling_weights, nb::arg("charges_kg"),
+            nb::arg("nearest_fired_distance_m"), nb::arg("spacing_m"), nb::arg("charge_exponent"),
+            nb::arg("d_factor") = 1.0, nb::arg("p") = 4,
+            "Blair (2008) eq. 10 weights C_n, vectors in initiation order; use inf for the first hole. P = 4 is a design "
+            "choice. Holes fired together (within the time tolerance, 1e-9 s) go next to each other in any order, each "
+            "with the distance to the nearest hole fired before the tie (inf if none), never to its tie partner.");
+    nfd.def("damage_weights", &nearfield::damage_weights, nb::arg("x"), nb::arg("y"), nb::arg("charges_kg"),
+            nb::arg("firing_times_s"), nb::arg("monitor_x"), nb::arg("monitor_y"), nb::arg("spacing_m"), nb::arg("eta"),
+            nb::arg("g") = 23337.0,
+            "Blair (2008) damage model weights E_n = S_n / D_n (eqs. 16 and 20), in plan view, in input order; g in m^2. "
+            "Fired earlier means t_j < t_n - 1e-9 s (the time tolerance). Every hole fired earlier with a.b > 0 screens, "
+            "also one beyond the monitor (literal from the source; screening_counts excludes it). S_n has no floor "
+            "(eq. 20 has none, unlike screening_factor): at near-field distances g / d^2 is huge and one hole on the line "
+            "drives the weight to almost 0, an extrapolation without data. Domain error if the monitor coincides with a "
+            "hole or two holes share a position.");
+    nfd.def("max_charge_per_window", &nearfield::max_charge_per_window, nb::arg("firing_times_s"), nb::arg("charges_kg"),
+            nb::arg("window_s") = 0.008,
+            "Largest charge initiated within any window [t, t + window - 1e-9 s) starting at a firing time (the 1e-9 s is "
+            "the time tolerance: holes nominally one window apart are not added by rounding noise); 8 ms is Duvall et al. "
+            "(1963) as reported by Blair (1999). Charges must be > 0 and the vectors not empty.");
+    // Con guion bajo: no es un nombre público del núcleo (la API reexporta todos los públicos); lo lee
+    // python/blastingpy/nearfield.py para aplicar la misma regla de «ya inició».
+    nfd.attr("_time_tolerance_s") = nearfield::time_tolerance_s;
 }

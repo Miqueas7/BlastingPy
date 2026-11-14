@@ -13,7 +13,9 @@ Conventions
   ``"instantel"`` counts whole samples and flags ``above_limit`` over ``100 * fs / 1024`` Hz. The frequency is NaN
   unless ``zc_status == "ok"``, so an event row never carries a frequency the method could not stand behind.
 * The FFT frequency is the largest bin of ``|rfft(x - mean)|`` (bin 0 excluded); ``fft_peaks_6db_hz`` lists the local
-  maxima with at least half the largest amplitude (6 dB), largest first.
+  maxima with at least half the largest amplitude (6 dB), largest first. When it falls in the two lowest bins
+  (``f <= 2 / T``) a warning says that the spectrum is dominated by the envelope or a trend: use the zero-crossing
+  frequency.
 * dB(L) is ``20 * log10(PSPL / 20e-6 Pa)``; a zero PSPL gives NaN, not minus infinity.
 * The event row uses ``ppv_kind = "component_max"``: ``ppv_mm_s`` is the largest geophone peak and ``frequency_hz``
   its zero-crossing frequency (ties: transverse, vertical, longitudinal).
@@ -113,8 +115,25 @@ def fft_frequency(x, sample_rate_hz: float) -> tuple[float, tuple[float, ...]]:
     The spectrum is ``|numpy.fft.rfft(x - mean(x))|`` without bin 0. A local maximum is a bin larger than its left
     neighbour and not smaller than its right one (the last bin compares only to the left); those with at least half
     the largest amplitude are kept. A flat signal, or one that varies only at rounding level so that no
-    peak is kept, has no frequency: ``(nan, ())``.
+    peak is kept, has no frequency: ``(nan, ())``. When the dominant peak is in one of the two lowest bins
+    (``f <= 2 / T``, ``T`` the record length) it is returned anyway, with a ``UserWarning``: the spectrum is then
+    dominated by the record's envelope or a trend (for example several holes interfering), not by an oscillation.
     """
+    f, peaks, low = _fft(x, sample_rate_hz)
+    if low:
+        warnings.warn(_low_bin_message(f), UserWarning, stacklevel=2)
+    return f, peaks
+
+
+def _low_bin_message(f: float, name: str | None = None) -> str:
+    where = "" if name is None else f" of '{name}'"
+    return (f"the dominant FFT frequency{where} is {f:g} Hz, in the two lowest bins of the spectrum (f <= 2 / T): the "
+            "spectrum is dominated by the record's envelope or a trend, not by an oscillation; use the zero-crossing "
+            "frequency")
+
+
+def _fft(x, sample_rate_hz: float) -> tuple[float, tuple[float, ...], bool]:
+    """:func:`fft_frequency` plus whether the dominant peak is in the two lowest bins (R3), without warning."""
     if not _is_real(sample_rate_hz) or sample_rate_hz <= 0:
         raise _param_error("sample_rate_hz", f"must be a finite number > 0. Received: {sample_rate_hz!r}")
     try:
@@ -126,7 +145,7 @@ def fft_frequency(x, sample_rate_hz: float) -> tuple[float, tuple[float, ...]]:
     if not np.all(np.isfinite(x)):
         raise _param_error("x", "must not contain NaN or infinite values")
     if np.ptp(x) == 0.0:  # señal plana (también toda en cero): x − media no siempre da cero exacto
-        return math.nan, ()
+        return math.nan, (), False
     amp = np.abs(np.fft.rfft(x - x.mean()))
     freqs = np.fft.rfftfreq(x.size, 1.0 / sample_rate_hz)
     i = np.arange(1, amp.size)
@@ -134,10 +153,10 @@ def fft_frequency(x, sample_rate_hz: float) -> tuple[float, tuple[float, ...]]:
     local = i[(amp[1:] > amp[:-1]) & (amp[1:] >= right)]
     kept = local[amp[local] >= 0.5 * amp[1:].max()]
     if kept.size == 0:  # variación al nivel del redondeo: el espectro no tiene un máximo local que valga
-        return math.nan, ()
+        return math.nan, (), False
     kept = kept[np.argsort(-amp[kept], kind="stable")]
     peaks = tuple(float(f) for f in freqs[kept])
-    return peaks[0], peaks
+    return peaks[0], peaks, bool(kept[0] <= 2)  # bins 1 y 2: f <= 2 / T
 
 
 def _has_three_figures(x: np.ndarray) -> np.ndarray:
@@ -147,12 +166,13 @@ def _has_three_figures(x: np.ndarray) -> np.ndarray:
         return np.abs(np.round(x * scale) / scale - x) <= 1e-9 * np.abs(x)
 
 
-def _channel(name: str, x: np.ndarray, record: Record, zc_method, diff_method) -> ChannelSummary:
+def _channel(name: str, x: np.ndarray, record: Record, zc_method, diff_method) -> tuple[ChannelSummary, bool]:
+    """The channel's summary and whether its FFT peak is in the two lowest bins."""
     fs = record.sample_rate_hz
     peak = _core.peak_abs(x)
     zc = _core.zero_crossing_frequency(x, fs, peak.index, zc_method)
     status = _ZC_STATUS[zc.status]
-    fft_f, fft_peaks = fft_frequency(x, fs)
+    fft_f, fft_peaks, low = _fft(x, fs)
     if name == "mic":
         accel_g = disp_mm = math.nan
     else:
@@ -161,7 +181,7 @@ def _channel(name: str, x: np.ndarray, record: Record, zc_method, diff_method) -
     return ChannelSummary(name=name, peak=peak.value, peak_time_s=float(record.time_s()[peak.index]),
                           zc_frequency_hz=zc.frequency_hz if status == "ok" else math.nan, zc_status=status,
                           fft_frequency_hz=fft_f, fft_peaks_6db_hz=fft_peaks, peak_acceleration_g=accel_g,
-                          peak_displacement_mm=disp_mm)
+                          peak_displacement_mm=disp_mm), low
 
 
 def analyze(record: Record, *, zc_method: str = "interpolated", acceleration: str = "central") -> RecordSummary:
@@ -175,7 +195,8 @@ def analyze(record: Record, *, zc_method: str = "interpolated", acceleration: st
         raise _param_error("record", f"must be a blastingpy.io.Record. Received: {type(record).__name__}")
     zc = _choice("zc_method", zc_method, _ZC_METHODS)
     diff = _choice("acceleration", acceleration, _DIFF_METHODS)
-    channels = {name: _channel(name, x, record, zc, diff) for name, x in record.channels.items()}
+    done = {name: _channel(name, x, record, zc, diff) for name, x in record.channels.items()}
+    channels = {name: summary for name, (summary, _) in done.items()}
 
     nan = math.nan
     pvs = pvs_time = pseudo = nan
@@ -188,6 +209,7 @@ def analyze(record: Record, *, zc_method: str = "interpolated", acceleration: st
     db_l = 20.0 * math.log10(pspl / _P_REF_PA) if pspl > 0 else nan  # NaN > 0 es False
 
     warns = list(record.warnings)
+    warns += [_low_bin_message(c.fft_frequency_hz, name) for name, (c, low) in done.items() if low]
     geo = [record.channels[g] for g in _GEOPHONES if g in record.channels]
     if geo:
         pooled = np.concatenate(geo)

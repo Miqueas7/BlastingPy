@@ -7,9 +7,11 @@ The central use case: a blasting engineer ends a monitoring campaign with a tabl
 delay, PPV, frequency). BlastingPy fits the attenuation law of the site, computes the maximum charge per delay and
 checks the result against a regulatory criterion, stating the edition, table, magnitude and frequency method used.
 
-**Status:** in development, unpublished (version 0.1.0). Sprints 1 to 4 of 5 are complete: events table, attenuation law,
-maximum charge and compliance verdict, reading seismograph records (waveform, PPV, vector sum, frequency), airblast, and
-flyrock (published range models, per-hole comparison and clearance distance). The package is not on PyPI and the repository is private.
+**Status:** in development, unpublished (version 0.1.0). The five blocks of version 0.1 are complete: events table,
+attenuation law, maximum charge and compliance verdict; reading seismograph records (waveform, PPV, vector sum,
+frequency); airblast; flyrock (published range models, per-hole comparison and clearance distance); and near-field
+vibration (Holmberg-Persson, Heelan, whole-blast simulation and its Monte Carlo). The package is not on PyPI and the
+repository is private.
 
 ## Install (from the repository)
 
@@ -71,7 +73,11 @@ A real export of each unvalidated format would settle it. Meanwhile, check the f
 seismograph's own software shows.
 
 - **The sample rate is never guessed.** If the file lacks it and you do not pass `sample_rate_hz`, the reader raises an
-  error. `read_waveform_csv` with a time column fits the rate by least squares and refuses a non-uniform column.
+  error. `read_waveform_csv` with a time column fits the rate by least squares and refuses a non-uniform column; a
+  fitted rate within 1e-6 of a whole number, and a pretrigger within 1e-3 of a sample period of a whole sample, are
+  taken as those values (times rounded to the microsecond give 1024.0000003 Hz). SAC stores the sample interval
+  rounded, so a 1024 Hz SAC reads as about 1023.54 Hz: `read_obspy` keeps the file's rate, adds a warning that names
+  the whole number, and takes `sample_rate_hz=` (it must agree with the file within 0.1 %).
 - **Units.** Inside everything is SI (mm/s, Pa, s). Units are inferred from the resolution only for the Micromate and
   Minimate Pro steps (0.00788 mm/s, 0.0156 Pa), with a warning; otherwise pass `units=`.
 - **Renamed channels** are not recognized by the Instantel readers: use
@@ -83,6 +89,9 @@ seismograph's own software shows.
 - **Vector sum.** `pvs_mm_s` is the real vector sum (maximum of the sum of squares sample by sample); the pseudo vector
   sum is the square root of the sum of the squares of the three component peaks, an upper bound of the real one.
 - **FFT.** `fft_frequency` takes the dominant frequency of the whole record and lists the peaks within 6 dB of the largest.
+  When the dominant peak is in the two lowest bins (f <= 2 / T, T the record length), as with several holes that
+  interfere, the spectrum is dominated by the record's envelope or a trend, not by an oscillation: `fft_frequency`
+  warns (`UserWarning`) and `analyze` adds it to its warnings. Use the zero-crossing frequency then.
 - **Acceleration and displacement.** They depend on the precision of the exported file: with three significant figures or
   fewer the summary warns. Displacement integrates each half cycle as the sum of V times the time step and halves the
   largest, as the Instantel manual describes.
@@ -114,6 +123,7 @@ A complete, runnable version with synthetic data is in [examples/03-airblast](ex
   refer to the rows used in the fit.
 - **An airblast-only campaign** is passed as a DataFrame with `distance_m`, `charge_kg` and `airblast_pa`.
 - **The measuring system is required.** The library refuses to compare against a limit without it.
+- **Verdicts as in `criteria.evaluate`:** `airblast.evaluate` gives `not_comparable` to an event without an airblast value (missing or NaN `airblast_pa`) and `indeterminate` to a value outside the domain (<= 0 or infinite).
 - **A C-weighted slow level is not a linear peak:** with `system="c-slow"` every verdict is `not_comparable`, and so is a C-slow published equation against any limit. A published equation is a median: `predict_published` and `evaluate_prediction` always warn that about half of the blasts exceed it.
 
 | System | USBM RI 8485 (1980) | OSMRE 30 CFR 816.67 |
@@ -157,7 +167,7 @@ from blastingpy import flyrock
 holes = pd.DataFrame({"diameter_mm": [165.0, 165.0], "burden_m": [4.0, 3.2], "stemming_m": [3.0, 2.5],
                       "linear_charge_kg_m": [18.2, 18.2], "hole_angle_from_vertical_deg": [10.0, 10.0]})
 table = flyrock.compare(holes, k=27.0)               # ranges in m, one row per hole
-worst = table["max_model_m"].max()                   # the worst hole, largest range across the models
+worst = table["max_model_m"].max()                   # the worst hole, largest hole-specific range
 clear = flyrock.clearance(worst, target="people", regulation="PE-DS024-2016-EM")
 print(clear.distance_m, clear.governs)
 ```
@@ -168,8 +178,8 @@ A complete, runnable version with a synthetic hole table is in [examples/04-flyr
 - **Peruvian minimum:** DS 024-2016-EM art. 267 a), as amended by DS 034-2023-EM: a 500 m radius when rock can be projected through 360 degrees, and in bench blasts at least 500 m in the direction the blast throws. It applies to the evacuation of workers (people, not equipment); the result says which of the model and the regulation governs (`governs`). Reporting the larger of the factored range and 500 m is a design decision, not the text of the regulation.
 - **`k` is required** (Richards & Moore site constant): 13.5 for soft competent rock, 27 for hard competent rock; the published data range is 15 to 37. A `k` outside [13.5, 37] gives a warning (the range goes with k²).
 - **Hole table:** required columns `diameter_mm`, `burden_m`, `stemming_m`, `linear_charge_kg_m` (or `explosive_density_kg_m3`, 300-2000 kg/m3, to compute it for a full hole); optional `charge_length_m`, `hole_angle_from_vertical_deg`, `powder_factor_kg_m3` (Lundborg's range by powder factor) and `sdob_m_kg13` (McKenzie, in m/kg^(1/3)). A NaN in an optional column means "not given for that row".
-- **`max_model_m`** is the largest range across the models of each hole; `compare` warns about the holes where it is more than twice `rm_max_m`. The blast's clearance is governed by its worst hole, and choosing the model is the engineer's decision: `clearance` takes one range and says so in its notes.
-- **Warnings where the result can come out too short:** Lundborg's powder-factor range below its maximum (a powder-factor correlation tends to underestimate, Roth 1979), an SDoB above 2.4 (ft/lb^(1/3) instead of m/kg^(1/3)?), a vertical hole, Roth's calibrated equations near their minimum c/m, and a linear charge implying a density below 300 kg/m3. A density in g/cc is an error.
+- **`max_model_m`** is the largest range across the hole-specific models of each hole (`rm_face_burst_m`, `rm_cratering_m`, `rm_stemming_ejection_m`, `lundborg_q_m`, `mckenzie_2018_m`); `compare` warns about the holes where it is more than twice `rm_max_m`. **`lundborg_max_m`** stays apart: it depends only on the diameter (Lundborg's practical maximum, for the optimal fragment), so it is the same for every hole of one diameter and does not tell which hole is the worst; it is the diameter-only upper envelope, and `compare` warns about the holes where it is more than twice `max_model_m`. The blast's clearance is governed by its worst hole, and choosing the model is the engineer's decision: `clearance` takes one range and says so in its notes.
+- **Warnings where the result can come out too short:** Lundborg's powder-factor range below its maximum (in `compare`, below half of it, a design threshold; a powder-factor correlation tends to underestimate, Roth 1979), an SDoB above 2.4 (ft/lb^(1/3) instead of m/kg^(1/3)?), a vertical hole, Roth's calibrated equations near their minimum c/m, and a linear charge implying a density below 300 kg/m3. A density in g/cc is an error.
 - **Charge column shorter than 1 m:** `compare` uses the actual charge mass (kg) instead of the linear charge, as Richards & Moore prescribe, and warns.
 - **Hole angle** is measured from the vertical. A vertical hole gives 0 m of stemming ejection, with a warning (the source says vertical holes need an adjustment).
 - **Diameters are in mm** (the Lundborg source uses inches; the library converts and rejects values that look like inches or metres).
@@ -188,6 +198,71 @@ A complete, runnable version with a synthetic hole table is in [examples/04-flyr
 **Published critiques** (`attrs["critiques"]`): models without drag can overestimate the range by factors of 2 to 8; Lundborg holds for spherical fragments of the optimal size; McKenzie inherits Lundborg's calibration (Szendrei & Tose 2022, JSAIMM 122(12), pp. 726-731); a powder-factor correlation tends to underestimate the range (Roth 1979, pp. 10-11, 29-31).
 
 **Not included, and why:** McKenzie (2009) coefficient and the SDoB definition (no source read defines it, so SDoB is yours to give), McKenzie's fragment size and minimum stemming, Roth's graphical curves and bench correlation, scaling Roth's calibrated equations to other explosives (the source does not state the rule and its printed factor looks inverted), drag trajectories, the shape of the clearance zone, and a hole-table file reader (pass a DataFrame; pandas already reads CSV and Excel).
+
+## Near field
+
+`blastingpy.nearfield` estimates the vibration close to a charge (Holmberg-Persson, Heelan) and simulates a whole blast
+by superposing a seed waveform, with a Monte Carlo over the delays and the amplitudes. The facts, pages and marks are in
+[docs/investigacion/FUENTES_SPRINT5.md](docs/investigacion/FUENTES_SPRINT5.md).
+
+```python
+import pandas as pd
+from blastingpy import attenuation, datasets, nearfield
+
+# Holmberg-Persson around a 3 m charge of 1 kg/m. K, alpha and beta are yours to give.
+charge = dict(k=700.0, alpha=0.7, beta=1.5, linear_charge_kg_m=1.0, z_start=-1.5, z_end=1.5)
+critical = nearfield.ppv_critical(10e6, 5000.0, 50e9)       # T Vp / E with the static E: 1000 mm/s
+extent = nearfield.hp_damage_extent(nearfield.HpModel.Niosh, **charge, z=0.0, ppv_limit_mm_s=critical)
+
+# Heelan around a 6 m column primed at the bottom.
+source = nearfield.PressureSource(vn_pressure_pa=5e9, n=6, gamma_per_s=8000.0)
+medium = nearfield.Medium(p_velocity_m_s=5000.0, s_velocity_m_s=2900.0, density_kg_m3=2700.0)
+column = nearfield.Column(hole_radius_m=0.05, z_bottom=0.0, z_top=6.0, elements=41, primer_element=1,
+                          vod_m_s=4500.0, charge_exponent=1.0)
+peak = nearfield.heelan_ppv(source, medium, column, 5.0, 3.0)        # at r = 5 m, z = 3 m
+print(peak.ppv_mm_s, peak.warnings)
+
+# A whole blast: hole table, seed (the record of a single-hole shot) and site law.
+holes = pd.DataFrame({"x_m": [0.0, 5.0, 10.0], "y_m": 0.0, "charge_kg": 80.0, "firing_time_s": [0.0, 0.017, 0.034]})
+seed = (datasets.synthetic_record(pretrigger_s=0.0, mic_pa=None), "vertical")   # stands in for your record
+blast = dict(law=attenuation.fit(datasets.synthetic_events(), law="sqrt"), wave_velocity_m_s=3000.0)
+result = nearfield.simulate_blast(holes, (5.0, 120.0), seed, **blast)
+print(result.ppv_mm_s, result.arrivals, result.warnings)
+mc = nearfield.monte_carlo_blast(holes, (5.0, 120.0), seed, delay_sigma_s=0.002, amplitude_cv=0.25,
+                                 simulations=2000, rng_seed=1, **blast)
+print(mc.percentile(95), mc.probability_exceeding(25.0))
+```
+
+A complete, runnable version with synthetic data is in [examples/05-nearfield](examples/05-nearfield/).
+
+| Model | Estimates | Inputs | Mark | Source read |
+|---|---|---|---|---|
+| Holmberg-Persson, original integral form (`hp_point`, `hp_original`, `hp_grid("original", ...)`) | Static PPV around a long charge, K [q ∫ dz / (r² + z²)^(β/(2α))]^α | K, α, β (yours), linear charge (kg/m), charged span and point (m) | V1, through NIOSH | Iverson, Kerkering & Hustrulid (2008), NIOSH, eqs. 1 and 5. Holmberg & Persson's own papers were not read |
+| Holmberg-Persson, closed form for β = 2α (`hp_term`) | The same integral as an arctangent; `hp_original` uses it when β = 2α | Linear charge, charged span, point | V2 | Onederra & Esen (2004), Fragblast 8(2), eq. 2 |
+| NIOSH modified form (`hp_mean_distance`, `hp_niosh`, `hp_grid("niosh", ...)`) | K (q L)^α / R̄^β, with R̄ the mean distance from the charge to the point | The same as the original form | V1 | NIOSH (2008), eqs. 8-10 |
+| Critical PPV (`ppv_critical`) and damage extent (`hp_damage_extent`) | T Vp / E, and the radial distance at which either form falls to a PPV limit | Tensile strength and static Young's modulus (Pa), P velocity (m/s); form, constants, charge, height z, limit (mm/s) | V2; the extent takes the mark of the form used | Onederra & Esen (2004), eq. 11, citing Persson, Holmberg & Lee (1994, p. 247). That the modulus is the static one is inferred |
+| Heelan element (`heelan_element`, with `pressure_function`, `g_function`, `g_peak`, `scaled_frequency`, `heelan_amplitude`) | P and SV velocity waveform radiated by a short cylindrical charge | `PressureSource` (von Neumann pressure in Pa, n, decay γ in 1/s), `Medium` (Vp and Vs in m/s, density in kg/m³), hole radius, half length, point, times | V1 | Heelan (1953), Geophysics 18(3), eqs. 12-13, in the form of Blair (2007), Geophysics 72(2), eqs. 8 and 13-16 |
+| Heelan column (`Column`, `column_weights`, `heelan_column`, `vector_peak`, `heelan_ppv`) | Waveform and vector PPV of a column initiated at the detonation velocity, linear (A = 1) or with non-linear weights (A < 1) | Source, medium, `Column` (hole radius, span, odd number of elements, primer element, detonation velocity in m/s, charge exponent A), point | V1 | Blair (2008), IJRMMS 45, eqs. 1-3 and 22. Inferred: the initiation time of each element and the mirrored weights when the primer is above mid-column |
+| Seed superposition (`superpose`, `simulate_blast`, `delay_sweep`) | Waveform of a whole blast at a monitor: one seed per hole, delayed and scaled | Hole table, monitor, seed, site law, wave velocity | V1 | Hinzen (1988), IJRMMS 25(6), eqs. 3-7; Blair (1999), Fragblast 3(4), eq. 1a |
+| Full-blast weights (`screening_counts`, `screening_factor`, `charge_scaling_weights`, `damage_weights`) | Weight of each hole by screening, charge scaling or damage | Positions, charges, firing times, mean spacing (m) | V1 | Blair (1999), eqs. 10b-10c; Blair (2008), eqs. 7-12 and 16-21 |
+| Monte Carlo (`monte_carlo_peaks`, `monte_carlo_blast`) | Distribution of the peak with scattered delays and amplitudes | The same as the simulation, plus `delay_sigma_s` (s), `amplitude_cv`, `simulations`, `rng_seed` | V1 for the equations; the delay distribution is yours | Blair (1999), eqs. 1b and 7 |
+| Charge per window (`max_charge_per_window`, `max_charge_8ms_kg`) | Largest charge fired within 8 ms | Firing times (s), charges (kg) | V2 | Duvall et al. (1963), as reported by Blair (1999, p. 337) |
+
+- **Units.** Lengths, coordinates and spacing in m; charges in kg and linear charge in kg/m; firing times, delays and their scatter in **seconds, not milliseconds**; wave and detonation velocities in m/s; pressures and moduli in Pa; density in kg/m³; sample rate in Hz. Every PPV and waveform comes out in mm/s (the `hp_*` functions return the unit K carries: mm/s with constants fitted in mm/s, kg and m).
+- **K, α and β of Holmberg-Persson are required.** No function has a default for them. 700 / 0.7 / 1.5 are the values NIOSH reports for surface blasts ([V2], attributed to Lundborg et al. 1978; no rock type is named); they are offered as data in `HOLMBERG_PERSSON_SURFACE`, with their citation, and are used only if you pass them. Fit the constants of your site.
+- **Holmberg-Persson is static, and its integral has a known flaw.** It is time-independent and ignores the detonation velocity (Onederra & Esen 2004, p. 62, summarizing Blair & Minchinton 1996 and 1997). Going from the sum over charge elements to the integral moves the exponent α from inside the sum to outside the integral, and the exponent does not commute with the sum (Hustrulid & Lu 2002, as reported by NIOSH, PDF p. 7; Blair 2008, p. 235, states the same defect). NIOSH's modified form answers it with a mean distance. The original form diverges on the charged axis (`hp_original` raises there, `hp_grid` gives NaN); the modified form is finite everywhere.
+- **Heelan holds within limits, and the library warns outside them.** Blair (2007, pp. E37-E40): the scaled frequency Ω_A = c γ a / Vp must be at most about 0.1 (above it Heelan overestimates the exact solution at any distance); the point is in the near field when Ω_A r / a < π; and the half length of an element should not exceed about twice the radius. `a` is the hole radius, the convention of Blair (2007); Heelan (1953, p. 695) defines it as the radius of the equivalent cavity. `heelan_ppv` refuses nothing on those grounds: each limit that is not met goes in `warnings` with the computed number, next to the standing caveats (P and SV are added linearly where they overlap; the non-linear column weights have no experimental validation).
+- **Time grid of `heelan_ppv`.** The PPV is always the peak of the waveform. Without `sample_rate_hz` and `duration_s` the grid is automatic: a step of 1 / (40 γ) until the last arrival plus 40 / γ (or plus (n + 4√n + 2) / γ if longer). With your own grid it warns when the record ends before the last arrival plus (n + 4√n + 2) / γ, the length of the pulse (the peak may be truncated) and when the step is longer than 1 / (10 γ) (the pulse is under-resolved; the sample rate of a seismograph is usually far too low here).
+- **Whole-blast simulation.** The amplitude of each hole is the **median** prediction of the site law (not its upper bound) for its charge and its distance to the monitor, times a weight; each hole arrives at its firing time plus distance / wave velocity; the result is one component, the seed's. The seed is normalized to unit peak and used from its first sample: trim the pretrigger. Inspect `arrivals` before trusting the peak. An arrival between two samples is spread linearly over them, which lowers its peak by up to sin²(π f / fs) for a seed of dominant frequency f (9.5 % at f = fs / 10): sample the seed at ten times its dominant frequency or more.
+- **Three weightings, each with its author's caveat** (they travel in `warnings`). `"linear"` (Hinzen 1988; Blair 1999), optionally with the screening of Blair (1999), whose g was fitted to one set of field data and whose floor of 0.2 the author sets for lack of near-field data. `"charge-scaling"` (Blair 2008, eq. 12): its author reports an almost linear, unrealistic decay of the amplitude with time and does not recommend it over the damage model. `"damage"` (Blair 2008, eq. 21): η = 0.2 is the author's first estimate and 0.3 fitted his single field case. Blair's (2008) models have no free faces and do not change the shape of the waveform. `charge_exponent` defaults to the law's own (β/2 for a square-root law, β/3 for a cube-root law, the fitted exponent for a general law); `SiteLaw.charge_exponent` is not that number for the scaled-distance laws.
+- **Firing times are compared with a tolerance of 1 ns.** Holes within 1 ns of each other are simultaneous: they do not count as already fired for each other, and two holes nominally 8 ms apart never share a window because of rounding.
+- **The 8 ms window.** `max_charge_8ms_kg` is the largest charge fired within any 8 ms, by firing times. The window comes from Duvall et al. (1963), as reported by Blair (1999, p. 337), who adds that there is nothing special about 8 ms: whether two holes separate depends on the seed.
+- **What the Monte Carlo randomizes.** The arrival of each hole, with a normal scatter of standard deviation `delay_sigma_s` that you give (a design choice: Blair 1999 publishes neither the type nor the deviation of the delay distribution), and its amplitude, multiplied by (1 + c z) with z standard normal and c = `amplitude_cv` (Blair 1999, eq. 7). It does not randomize the shape of the seed (Blair's fluctuating seed), so the variability of the waveform is under-represented, and the weights come from the nominal firing times. The same `rng_seed` gives the same peaks (across platforms, to about 1e-9 relative). The default `amplitude_cv = 0` ignores the scatter of the site law: when the law has σ > 0 a warning gives the coefficient of variation of a lognormal with that σ, √(exp((σ ln 10)²) − 1), for you to pass.
+- **Plausibility warnings.** Firing times that span more than 20 s or with more than 1 s between consecutive holes, and a delay above 1 s in `delay_sweep`, look like milliseconds and are flagged; so is a `wave_velocity_m_s` below 100 (it looks like km/s). A `delay_sigma_s` above 1 s is an error; so is a waveform of more than 2 000 000 samples. A seed taken from the microphone channel, a seed whose dominant frequency is above a tenth of its sample rate, and an argument the chosen weighting does not use are flagged too.
+- **Warnings that a lower PPV would otherwise hide.** `simulate_blast` and `monte_carlo_blast` always say that the amplitudes are the site law's median (about half of the holes exceed it). With `weighting="damage"`, holes with a screening factor S_n below 0.2 or closer than 99 m to the monitor are listed: S_n (Blair 2008, eq. 20) has no floor and g was fitted with monitors at 99 m or more (Blair 1999, Fig. 7b), so their weights extrapolate the source. These warnings (units, the median, `amplitude_cv`, the near field of the damage model and the under-sampled seed) go in `warnings` and are also emitted as `UserWarning`, so they show even if you never read `warnings`.
+- **Not validated against field data.** The functions reproduce the equations and worked numbers of their sources; no simulation here has been compared with a measured blast.
+
+**Not included, and the paper that would unlock it:** the scaled Heelan model and its constant γ_n (Blair & Minchinton 2006, Fragblast-8, pp. 152-159; the column here is the standard Heelan element with Blair's 2008 weights); the exact solution for the short charge (Blair 2007 and Meredith 1990; read, out of scope); the fluctuating seed of the Monte Carlo (its normalization is derived in Blair 1993a, Int. J. Numer. Anal. Methods Geomech. 17: 95-118); the composition of the longitudinal, transverse and vertical components (Blair 1999, eqs. 15a-15c: the sign convention depends on a figure); the statistical charge and its spectrum (Blair 1999, eqs. 17-23: read, not implemented; eq. 23 as printed carries a factor that its own limit does not give); Heelan's energy partition and his SV/P ratio of 1.6 (the printed formulas are inconsistent); the PPV at the end of the crushing zone (Onederra & Esen 2004, eq. 5, with Liu & Katsabanis 1993 and Esen et al. 2003: an exponent could not be verified and it needs non-ideal detonation pressures); and Holmberg & Persson's own papers (1979) and Persson, Holmberg & Lee (1994, p. 247), with which the integral, the surface constants and the critical PPV would be [V1]. Their 700-1000 mm/s damage limit is for Swedish igneous rocks, as reported by NIOSH, and is not offered as a general criterion.
 
 ## Conventions
 
@@ -277,9 +352,12 @@ finite number > 0 (`f_min` may be 0); anything else is refused when the profile 
 
 ## Not included yet
 
-Laws Langefors-Kihlstrom, Ghosh-Daemen and CMRI, and the standards UNE 22381, AS 2187.2, BS 6472-2, SS 4604866,
-SN 640312a and NBR 9653 are missing because no source with their formulas or values has been read. DIN 4150-3 line 1
-and the upper-floor criteria, the OSMRE Figure 1 curve and BS 7385-2 line 1 below 4 Hz are also out. Details in
+The five blocks planned for version 0.1 are in; what follows is not part of it. Each block lists what it leaves out,
+and why, at the end of its section ([Airblast](#airblast), [Flyrock](#flyrock), [Near field](#near-field)). In ground
+vibration: the laws Langefors-Kihlstrom, Ghosh-Daemen and CMRI, and the standards UNE 22381, AS 2187.2, BS 6472-2,
+SS 4604866, SN 640312a and NBR 9653 are not included because no source with their formulas or values has been read.
+DIN 4150-3 line 1 and the upper-floor criteria, the OSMRE Figure 1 curve and BS 7385-2 line 1 below 4 Hz are also out.
+Three seismograph formats (THOR, Blastware with header, histogram) are not validated against a real file. Details in
 [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 ## License

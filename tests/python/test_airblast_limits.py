@@ -85,7 +85,10 @@ def test_verdicts():
     out = airblast.evaluate(ev, USBM, system="2Hz")
     pd.testing.assert_frame_equal(ev, before)
     assert list(out.index) == list(ev.index)
-    assert list(out["status"]) == ["exceeds", "complies", "complies"] + ["indeterminate"] * 4
+    # R4, como criteria.evaluate: falta el valor (NaN) -> not_comparable; fuera del dominio (<= 0, inf) -> indeterminate
+    assert list(out["status"]) == ["exceeds", "complies", "complies", "not_comparable"] + ["indeterminate"] * 3
+    assert out["reason"].iloc[3] == "no airblast value (airblast_pa is missing)"
+    assert all("outside the domain" in r for r in out["reason"].iloc[4:])
     assert out["airblast_db"].iloc[0] == pytest.approx(133.98, abs=0.01)
     assert out["margin_db"].iloc[0] == pytest.approx(-0.98, abs=0.01)
     assert (out["limit_db"] == 133).all()

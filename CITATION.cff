@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use BlastingPy in your work, please cite it as below."
+type: software
+title: "BlastingPy: blast vibration, airblast, flyrock and near-field analysis for mining"
+abstract: >-
+  Open-source blasting effects library for mining: event records and per-country damage criteria, site attenuation
+  laws, waveform analysis and signature-hole superposition, airblast, flyrock range and clearance, and near-field
+  vibration (Holmberg-Persson and Heelan models). C++20 core with a Python API. Every result records the method and
+  the source it follows.
+authors:
+  - family-names: "Quintanilla Ventura"
+    given-names: "Miqueas"
+    email: "miqueasq@gmail.com"
+version: "0.1.0"
+date-released: "2026-11-14"
+license: MIT
+repository-code: "https://github.com/Miqueas7/BlastingPy"
+keywords:
+  - mining
+  - blasting
+  - ground vibration
+  - PPV
+  - airblast
+  - flyrock
+  - scaled distance
+  - near field

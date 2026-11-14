@@ -250,3 +250,16 @@ def test_plot_record_without_mic_and_into_given_figure():
     fig = plt.figure()
     out = plot_record(synthetic_record(mic_pa=None), fig=fig)
     assert out is fig and len(fig.axes) == 3
+
+
+def test_compliance_legend_stays_inside_its_axes_in_a_grid():
+    ev = synthetic_events(n=12, seed=6)
+    ev["ppv_mm_s"] = ev["ppv_mm_s"].clip(upper=40)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    for ax in axes:
+        plot_compliance(ev, "USBM-RI8507-1980", "appendix-b-drywall", ax=ax)
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    for ax in axes:
+        box, frame = ax.get_legend().get_window_extent(renderer), ax.get_window_extent(renderer)
+        assert frame.x0 <= box.x0 and box.x1 <= frame.x1 and frame.y0 <= box.y0 and box.y1 <= frame.y1
