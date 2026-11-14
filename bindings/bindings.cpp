@@ -4,6 +4,7 @@
  */
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
@@ -97,12 +98,17 @@ NB_MODULE(_blastingpy_core, m) {
         .def_ro("warnings", &SiteLaw::warnings);
     at.def("normal_quantile", &normal_quantile, nb::arg("p"),
            "Standard normal quantile, 0 < p < 1 (normal_quantile(0.95) = 1.645).");
+    nb::enum_<Quantity>(at, "Quantity", "Quantity a site law is fitted on (names, warnings and citation).")
+        .value("Ppv", Quantity::Ppv, "peak particle velocity, mm/s")
+        .value("Airblast", Quantity::Airblast, "peak overpressure, Pa (cube-root law of USBM RI 8485)");
     at.def("fit_site_law", &fit_site_law, nb::arg("distance_m"), nb::arg("charge_kg"), nb::arg("ppv_mm_s"),
-           nb::arg("law"), nb::arg("z") = 2.0, nb::arg("outlier_z") = 3.0,
+           nb::arg("law"), nb::arg("z") = 2.0, nb::arg("outlier_z") = 3.0, nb::arg("quantity") = Quantity::Ppv,
            "Fit the site law by least squares in log10; the upper bound is k * 10**(z * sigma).");
     at.def("make_site_law", &make_site_law, nb::arg("law"), nb::arg("k"), nb::arg("beta"),
            nb::arg("charge_exponent") = validation::unset, nb::arg("sigma") = 0.0, nb::arg("z") = 2.0,
-           "User-defined site law (no fit); charge_exponent is required for Law.General.");
+           nb::arg("info") = nb::none(),
+           "User-defined site law (no fit); charge_exponent is required for Law.General. `info` replaces the "
+           "citation (default: the law's own, marked user-defined).");
 
     nb::enum_<Level>(at, "Level", "Which constant of the law a prediction uses.")
         .value("Median", Level::Median, "k: the median of the fit")

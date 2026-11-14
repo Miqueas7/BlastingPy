@@ -182,6 +182,110 @@ def test_limit_errors_use_airblast_wording():
         airblast.distance_for(law, 90.0, -1.0)
 
 
+# (K, β) de las 17 ecuaciones, literales de FUENTES_SPRINT3.md («Ecuaciones publicadas»): un cambio del JSON se nota.
+CATALOG = {
+    "USBM-RI8485/coal-highwall/0.1Hz": (0.162, 0.794), "USBM-RI8485/coal-highwall/2Hz": (0.146, 0.823),
+    "USBM-RI8485/coal-highwall/5Hz": (0.087, 0.725), "USBM-RI8485/coal-highwall/c-slow": (0.015, 0.885),
+    "USBM-RI8485/coal-parting/0.1Hz": (169, 1.623), "USBM-RI8485/coal-parting/2Hz": (49.6, 1.477),
+    "USBM-RI8485/coal-parting/5Hz": (194, 1.666), "USBM-RI8485/coal-parting/c-slow": (41.6, 1.785),
+    "USBM-RI8485/metal-mine-highwall/0.1Hz": (0.401, 0.713), "USBM-RI8485/quarry/0.1Hz": (0.246, 0.711),
+    "USBM-RI8485/quarry-direction-of-initiation/0.1Hz": (0.979, 1.120),
+    "USBM-RI8485/quarry-behind-face/0.1Hz": (0.056, 0.515),
+    "USBM-RI8485/quarry-opposite-initiation/0.1Hz": (0.028, 0.098),
+    "USBM-RI8485/quarry-front-of-face/0.1Hz": (1.317, 0.966),
+    "OSMRE-BLEP/highwall": (0.162, 0.79), "OSMRE-BLEP/parting": (169, 1.62),
+    "AS2187.2-2006/free-face": (516, 1.45),
+}
+
+
+def test_catalog_values_are_the_sources():
+    assert airblast.list_equations() == list(CATALOG)
+    for equation_id, (k, beta) in CATALOG.items():
+        eq = airblast.published(equation_id)
+        assert (eq.k_original, eq.beta) == (k, beta) and isinstance(eq.k_original, float)
+
+
+def test_range_edges():
+    # Fila 1: rango ~10 a ~900 ft/lb^⅓; el borde cuenta como dentro.
+    eq = "USBM-RI8485/coal-highwall/0.1Hz"
+    assert airblast.predict_published(eq, 10 * FT, LB).warnings == []
+    assert airblast.predict_published(eq, 900 * FT, LB).warnings == []
+    assert any("extrapolation" in w for w in airblast.predict_published(eq, 9.9 * FT, LB).warnings)
+
+
+def test_fit_info_cites_ri8485():
+    info = airblast.fit(_events()).info
+    assert info.method_id == "AIR-CBRT-USBM8485"
+    assert info.verification == core.Verification.Primary
+    assert "RI 8485" in info.source and "Table B-1" in info.source
+
+
+def _no_vibration_words(texts):
+    for text in texts:
+        assert "PPV" not in text and "ppv" not in text and "BIVDEP" not in text and "30" not in text, text
+
+
+def test_fit_warnings_speak_of_airblast():
+    noisy = _events()
+    noisy["airblast_pa"] *= [1.1, 0.9, 1.05, 0.95, 1.0]
+    law = airblast.fit(noisy)
+    assert law.n < 30 and law.sigma > 0
+    _no_vibration_words(law.warnings)
+    rising = _events(beta=1.2)
+    rising["airblast_pa"] = [10.0, 20.0, 40.0, 80.0, 160.0]
+    rising["charge_kg"] = 100.0
+    law = airblast.fit(rising)
+    assert any("overpressure does not decrease with distance" in w for w in law.warnings)
+    _no_vibration_words(law.warnings)
+    for bad in (_events().iloc[:2], _events().assign(airblast_pa=[1.0, 0.0, 1.0, 1.0, 1.0])):
+        with pytest.raises(ValueError) as e:
+            airblast.fit(bad)
+        _no_vibration_words([str(e.value)])
+
+
+@pytest.mark.parametrize("equation_id, verification", [
+    ("USBM-RI8485/quarry/0.1Hz", "Primary"), ("OSMRE-BLEP/parting", "Primary"),
+    ("AS2187.2-2006/free-face", "Secondary"),
+])
+def test_published_law_info(equation_id, verification):
+    eq = airblast.published(equation_id)
+    assert eq.law.info.method_id == equation_id
+    assert eq.law.info.verification == getattr(core.Verification, verification)
+    assert eq.law.info.source == eq.citation
+
+
+def test_vibration_fit_unchanged():
+    from blastingpy import attenuation
+
+    d = np.array([100.0, 200.0, 400.0, 800.0])
+    v = 1000.0 * (d / 10.0) ** -1.6 * np.array([1.1, 0.9, 1.05, 0.95])
+    law = attenuation.fit(pd.DataFrame({"distance_m": d, "charge_kg": 100.0, "ppv_mm_s": v}), law="cbrt")
+    assert (law.info.method_id, law.info.verification) == ("ATT-CBRT-USBM656", core.Verification.Secondary)
+    assert law.warnings == ["fewer than 30 events: OSMRE BIVDEP (2019) asks for a minimum of 30"]
+    made = attenuation.make_site_law(attenuation.Law.CubeRoot, 1000.0, 1.6)
+    assert (made.info.method_id, made.info.verification) == ("ATT-CBRT-USBM656", core.Verification.UserDefined)
+
+
+def test_fit_three_rows_one_nan():
+    events = _events().iloc[:3].copy()
+    events.loc[events.index[1], "airblast_pa"] = np.nan
+    with pytest.warns(UserWarning), pytest.raises(ValueError, match=DOMAIN + " 'airblast_pa'.*at least 3"):
+        airblast.fit(events)
+
+
+def test_outliers_index_the_rows_used():
+    d = np.linspace(100.0, 2000.0, 20)
+    p = 5000.0 * (d / np.cbrt(50.0)) ** -1.2 * np.where(np.arange(20) % 2, 1.02, 0.98)
+    p[12] *= 10.0  # atípico sembrado
+    events = pd.DataFrame({"distance_m": d, "charge_kg": 50.0, "airblast_pa": p}, index=[f"e{i}" for i in range(20)])
+    events.loc[["e3", "e7"], "airblast_pa"] = np.nan  # sin micrófono
+    with pytest.warns(UserWarning, match=r"refer to the 18 rows used"):
+        law = airblast.fit(events)
+    used = events[np.isfinite(events["airblast_pa"])]
+    assert list(used.index[law.outliers]) == ["e12"]
+    assert len(law.residuals) == len(used)
+
+
 def test_submodule_is_exposed():
     import blastingpy
 

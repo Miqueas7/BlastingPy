@@ -24,7 +24,7 @@ import pandas as pd
 
 from ._blastingpy_core import _airblast as _ab
 from ._blastingpy_core import _attenuation as _core
-from ._blastingpy_core import _units
+from ._blastingpy_core import MethodInfo, Verification, _units
 from .units import _apply
 
 SiteLaw = _core.SiteLaw
@@ -38,6 +38,7 @@ __all__ = ["to_db", "from_db", "fit", "predict", "max_charge", "distance_for", "
 _COLUMNS = ("distance_m", "charge_kg", "airblast_pa")
 _FT_LB = "psi; ft/lb^(1/3)"
 _M_KG = "kPa; m/kg^(1/3)"
+_VERIFICATION = {"V1": Verification.Primary, "V2": Verification.Secondary}
 
 
 def _vectorized(func, values):
@@ -60,7 +61,7 @@ def from_db(level_db):
 
 
 def _core_call(func, *args, **renames):
-    """Call the core and name the airblast parameter in its domain errors (the core speaks of PPV)."""
+    """Call the core and name the airblast limit in its domain errors (the core's inverses speak of PPV)."""
     try:
         return func(*args)
     except ValueError as e:
@@ -73,9 +74,10 @@ def _core_call(func, *args, **renames):
 def fit(events: pd.DataFrame, *, z: float = 2.0, outlier_z: float = 3.0) -> SiteLaw:
     """Fit ``P = K (D / W**(1/3))**-beta`` to ``events`` (columns ``distance_m``, ``charge_kg``, ``airblast_pa``).
 
-    Rows whose ``airblast_pa`` is not finite (no microphone) are skipped with a ``UserWarning``. K is in Pa-m-kg^(1/3);
-    ``z`` and ``outlier_z`` work as in :func:`blastingpy.attenuation.fit`. The law's ``info`` and ``warnings`` come from
-    the shared regression (they cite the cube-root law of ground vibration).
+    Rows whose ``airblast_pa`` is not finite (no microphone) are skipped with a ``UserWarning``; then ``outliers`` and
+    ``residuals`` refer to the rows used, ``events[np.isfinite(events["airblast_pa"])]`` (for example
+    ``used.index[law.outliers]``). K is in Pa-m-kg^(1/3); ``z`` and ``outlier_z`` work as in
+    :func:`blastingpy.attenuation.fit`. ``info`` cites USBM RI 8485 (Table B-1).
     """
     missing = [c for c in _COLUMNS if c not in events.columns]
     if missing:
@@ -86,10 +88,11 @@ def fit(events: pd.DataFrame, *, z: float = 2.0, outlier_z: float = 3.0) -> Site
     p = events["airblast_pa"].to_numpy(dtype=float)
     used = np.isfinite(p)
     if not used.all():
-        warnings.warn(f"{int((~used).sum())} events without a finite airblast_pa were skipped", UserWarning,
-                      stacklevel=2)
+        warnings.warn(f"{int((~used).sum())} events without a finite airblast_pa were skipped; outliers and residuals "
+                      f"refer to the {int(used.sum())} rows used: events[np.isfinite(events['airblast_pa'])]",
+                      UserWarning, stacklevel=2)
     d, w = (events[c].to_numpy(dtype=float)[used].tolist() for c in _COLUMNS[:2])
-    return _core_call(_core.fit_site_law, d, w, p[used].tolist(), Law.CubeRoot, z, outlier_z, ppv_mm_s="airblast_pa")
+    return _core.fit_site_law(d, w, p[used].tolist(), Law.CubeRoot, z, outlier_z, _core.Quantity.Airblast)
 
 
 def predict(law: SiteLaw, distance_m: float, charge_kg: float, level: Level = Level.Upper) -> Prediction:
@@ -136,8 +139,10 @@ def _equation(raw: dict) -> PublishedEquation:
         raise ValueError(f"Domain error [BlastingPy]: parameter 'units' of {raw['id']!r} must be {_FT_LB!r} or "
                          f"{_M_KG!r}. Received: {units!r}")
     rng = raw["scaled_distance_range"]
+    info = MethodInfo(raw["id"], _VERIFICATION[raw["verification"]], raw["citation"])
     return PublishedEquation(
-        id=raw["id"], law=_core.make_site_law(Law.CubeRoot, k_si, beta), system=raw["system"], k_original=k,
+        id=raw["id"], law=_core.make_site_law(Law.CubeRoot, k_si, beta, info=info), system=raw["system"],
+        k_original=float(k),
         beta=beta, units_original=units, n=raw["n"], r=raw["r"], se_db=raw["se_db"],
         scaled_distance_range_si=None if rng is None else (rng[0] * sd_factor, rng[1] * sd_factor),
         verification=raw["verification"], citation=raw["citation"], notes=tuple(raw["notes"]))
