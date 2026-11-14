@@ -92,9 +92,10 @@ def test_nearfield_example(tmp_path, monkeypatch, capsys):
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
     monkeypatch.setattr(sys, "argv", [str(EXAMPLE_5), str(tmp_path / "out")])
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")  # the library's warnings travel in the results, never as a UserWarning
+    with pytest.warns(UserWarning) as caught:  # the results also emit their median warning (one per whole blast)
         runpy.run_path(str(EXAMPLE_5), run_name="__main__")
+    assert {str(w.message) for w in caught} == {"amplitudes are the site law's median: about half of the holes "
+                                                "exceed it"}
     assert (tmp_path / "out" / "holmberg_persson.png").is_file()
     assert not list(elsewhere.iterdir())  # nothing is written outside the directory given as argument
     lines = capsys.readouterr().out.splitlines()

@@ -229,7 +229,9 @@ inline double hp_damage_extent(HpModel model, double k, double alpha, double bet
     return 0.5 * (lo + hi);
 }
 
-/// PPVcrit = T·Vp/E en m/s, devuelto en mm/s. T y E en Pa, Vp en m/s; finitos y > 0.
+/// PPVcrit = T·Vp/E en m/s, devuelto en mm/s. T y E en Pa, Vp en m/s; finitos y > 0. [V2]: Onederra y Esen (2004),
+/// Fragblast 8(2), ec. 11, p. 69, que cita a Persson, Holmberg y Lee (1994), Rock Blasting and Explosives Engineering,
+/// CRC, p. 247 (no leída). Que E sea el estático es inferido del recálculo de su Tabla 1.
 inline double ppv_critical(double tensile_strength_pa, double p_velocity_m_s, double youngs_modulus_pa) {
     validation::require_positive(tensile_strength_pa, "tensile_strength_pa");
     validation::require_positive(p_velocity_m_s, "p_velocity_m_s");
@@ -459,7 +461,12 @@ inline Waveform heelan_column(const PressureSource& source, const Medium& medium
 //   5–7, la suma sobre i es inferida porque la ec. 3 se imprime sin sumatoria; Blair 1999 ec. 1a, p. 336) [V1]. Salida
 //   desde t = 0 (muestra i en t = i/fs); la llegada entre dos muestras reparte el impulso linealmente (inferido). Una
 //   llegada a menos de 1e-9 muestras de una muestra entera cae en ella (inferido): 9·0,001 s y 0,009 s a 1 kHz dan la
-//   misma onda. Más de 1e8 muestras es error de dominio (tiempos que no están en segundos).
+//   misma onda. Más de 1e8 muestras es error de dominio (tiempos que no están en segundos). Efecto del reparto
+//   lineal: es un filtro pasabajos; una llegada a media muestra baja el pico de una componente de frecuencia f en
+//   1 − cos(π·f/fs) (5 % con f = fs/10, 28 % con 500 Hz a 2048 Hz). En el Monte Carlo las llegadas caen en
+//   cualquier fracción de muestra, así que los picos simulados quedan por debajo del determinista. Conviene una
+//   semilla muestreada a 10 veces su frecuencia dominante o más (elección de diseño); la capa de Python avisa cuando
+//   no lo está.
 // - Tolerancia de tiempos, time_tolerance_s = 1 ns (elección de diseño, inferida: ninguna fuente la da): el pozo s
 //   «ya inició» respecto del pozo n si t_s < t_n − 1 ns, y la ventana de carga es [t, t + ventana − 1 ns). Así dos
 //   tiempos nominalmente iguales que salen de sumas de retardos distintas (0,1 + 0,2 frente a 0,3) son un empate.
@@ -512,7 +519,8 @@ inline bool output_fits(double last_position, std::size_t seed_samples) {
 
 }  // namespace detail
 
-/// v(t) = Σ_j w_j·s(t − d_j) muestreado a fs desde t = 0; largo = ceil(máx llegada·fs) + largo(semilla) + 1.
+/// v(t) = Σ_j w_j·s(t − d_j) muestreado a fs desde t = 0; largo = ceil(máx llegada·fs) + largo(semilla) + 1. Una
+/// llegada entre muestras se reparte linealmente: a media muestra baja el pico en 1 − cos(π·f/fs) (ver arriba).
 inline std::vector<double> superpose(const std::vector<double>& seed, double sample_rate_hz,
                                      const std::vector<double>& arrival_times_s, const std::vector<double>& amplitudes) {
     validation::require(!seed.empty(), "seed", "must not be empty", 0.0);

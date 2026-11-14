@@ -287,7 +287,10 @@ NB_MODULE(_blastingpy_core, m) {
             nb::arg("ppv_limit_mm_s"),
             "Radial distance where the PPV falls to the limit at height z; NaN if it never does.");
     nfd.def("ppv_critical", &nearfield::ppv_critical, nb::arg("tensile_strength_pa"), nb::arg("p_velocity_m_s"),
-            nb::arg("youngs_modulus_pa"), "T Vp / E in mm/s (Onederra and Esen eq. 11); pass the static E.");
+            nb::arg("youngs_modulus_pa"),
+            "T Vp / E in mm/s, T and E in Pa, Vp in m/s [V2]: Onederra and Esen (2004), Fragblast 8(2), eq. 11, p. 69, "
+            "citing Persson, Holmberg and Lee (1994), Rock Blasting and Explosives Engineering, CRC, p. 247, which "
+            "was not read. Pass the static E (inferred: it reproduces the source's Table 1).");
 
     nb::class_<nearfield::Medium>(nfd, "Medium", "Elastic medium: P and S velocities (m/s), density (kg/m3); mu = rho Vs^2.")
         .def(nb::init<double, double, double>(), nb::arg("p_velocity_m_s"), nb::arg("s_velocity_m_s"),
@@ -358,6 +361,9 @@ NB_MODULE(_blastingpy_core, m) {
             "v(t) = sum_j w_j s(t - d_j) (Hinzen 1988 eqs. 3 and 7; Blair 1999 eq. 1a), sampled from t = 0; length = "
             "ceil(max arrival * fs) + len(seed) + 1; an arrival between samples is spread linearly over its neighbours, "
             "and one within 1e-9 samples of a whole sample falls on it (9 * 0.001 s and 0.009 s give the same waveform). "
+            "The linear spread is a low-pass filter: an arrival mid-sample lowers the peak of a component of frequency "
+            "f by 1 - cos(pi f / fs) (5 % at fs / 10, 28 % for 500 Hz at 2048 Hz), so a seed should be sampled at 10 "
+            "or more times its dominant frequency (nearfield.simulate_blast warns otherwise). "
             "Empty vectors and a waveform of more than 1e8 samples are domain errors.");
     nfd.def("monte_carlo_peaks", &nearfield::monte_carlo_peaks, nb::arg("seed"), nb::arg("sample_rate_hz"),
             nb::arg("nominal_arrival_times_s"), nb::arg("amplitudes"), nb::arg("delay_sigma_s"), nb::arg("amplitude_cv"),

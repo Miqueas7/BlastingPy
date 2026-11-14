@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -74,6 +75,7 @@ from . import airblast
 from ._blastingpy_core import _nearfield as _nf
 from .attenuation import Law, Level, SiteLaw, predict_ppv
 from .io import Record
+from .waveform import fft_frequency
 
 HpModel = _nf.HpModel
 hp_point = _nf.hp_point
@@ -136,6 +138,14 @@ _MAX_SIGMA_S = 1.0
 _FIRING_SPAN_S = 20.0
 _LONG_DELAY_S = 1.0
 _STEPS_PER_PULSE = 10.0  # heelan_ppv avisa si el paso pasa de 1/(10 gamma): elección de diseño (el automático es 1/40)
+# Más umbrales de diseño (revisión final; no vienen de una fuente). Una onda sísmica en roca no viaja a menos de
+# 100 m/s: por debajo, lo más probable es que esté en km/s. Con fs ≥ 10 veces la frecuencia dominante de la semilla,
+# el reparto lineal de una llegada entre dos muestras resta a lo más 1 − cos(π/10) ≈ 5 % del pico.
+_SLOW_WAVE_M_S = 100.0
+_SAMPLES_PER_PERIOD = 10.0
+_MIN_SCREENING = 0.2  # el piso de screening_factor (Blair 1999, p. 346): por debajo, S_n de la ec. 20 no tiene datos
+_G_NEAREST_MONITOR_M = 99.0  # el monitor más cercano con que se ajustó g (Blair 1999, Fig. 7b)
+_MEDIAN = "amplitudes are the site law's median: about half of the holes exceed it"
 _ETA = 0.2  # primera estimación de eta de Blair (2008); el valor por omisión de simulate_blast
 _OUTSIDE = " is outside the fitted range"  # texto del aviso de extrapolación del núcleo (attenuation.hpp)
 _G = 23337.0  # g de Blair (1999), Fig. 7c; el valor por omisión del núcleo
@@ -152,6 +162,19 @@ _DELAY_DISTRIBUTION = ("the delay scatter is the user's: a normal distribution w
                        "because Blair (1999) publishes neither the type nor the deviation of the delay distribution")
 _FIXED_SEED = ("the fluctuating seed of Blair (1999) is not modelled: every hole radiates the same seed, so the "
                "variability of the waveform shape is under-represented")
+
+
+class _Loud(str):
+    """A note of the final review of sprint 5: it goes in ``warnings`` and is also emitted as a UserWarning."""
+
+
+def _emitted(notes) -> tuple[str, ...]:
+    """The result's ``warnings``; the loud notes are also emitted, pointing at the line that called the public
+    function (stacklevel 3: this helper, the public function, its caller)."""
+    for note in notes:
+        if isinstance(note, _Loud):
+            warnings.warn(str(note), UserWarning, stacklevel=3)
+    return tuple(str(note) for note in notes)
 
 
 def _error(name: str, detail: str) -> ValueError:
@@ -229,17 +252,19 @@ def heelan_ppv(source, medium, column, r: float, z: float, *, sample_rate_hz: fl
 
     Time starts when the primer initiates. Without ``sample_rate_hz`` the step is ``1 / (40 gamma)``; without
     ``duration_s`` the record lasts until the last arrival (initiation of the element at the detonation velocity plus
-    its S travel time) plus ``40 / gamma``. A grid of more than 2 000 000 samples is an error. The pulse lasts a few
-    ``1 / gamma``, so the sample rate of a seismograph is usually far too low here: leave ``sample_rate_hz`` out
-    unless you need a particular grid.
+    its S travel time) plus ``40 / gamma``, or plus ``(n + 4 sqrt(n) + 2) / gamma`` if that is longer (the pulse of
+    g(tau) lasts about ``n + 4 sqrt(n)`` in ``tau = gamma t``). A grid of more than 2 000 000 samples is an error. The
+    pulse lasts a few ``1 / gamma``, so the sample rate of a seismograph is usually far too low here: leave
+    ``sample_rate_hz`` out unless you need a particular grid.
 
     ``warnings`` always says that the P and SV pulses are added linearly where they overlap, and adds, with the
     computed number, each limit of Blair (2007, pp. E37-E40) that is not met: ``Omega_A > 0.1`` (Heelan overestimates
     the exact solution), ``Omega_A r / a < pi`` (near field) and element half-length / radius > 2; that the non-linear
     column weights have no experimental validation when ``column.charge_exponent < 1``; that the peak may be
-    truncated when ``duration_s`` ends before the last arrival plus ``10 / gamma``; and that it may be under-resolved
-    when the time step is longer than ``1 / (10 gamma)``. Nothing is refused on those grounds: the result is yours to
-    judge.
+    truncated when ``duration_s`` ends before the last arrival plus ``(n + 4 sqrt(n) + 2) / gamma`` (with n = 14
+    and 11 / gamma after the last arrival the peak can fall to about 0.73 of the true one); and that it may be
+    under-resolved when the time step is longer than ``1 / (10 gamma)``. Nothing is refused on those grounds: the
+    result is yours to judge.
     """
     _nf.heelan_column(source, medium, column, r, z, [])  # sin instantes: solo valida (fuente, medio, columna y r > 0)
     gamma, a = source.gamma_per_s, column.hole_radius_m
@@ -247,8 +272,9 @@ def heelan_ppv(source, medium, column, r: float, z: float, *, sample_rate_hz: fl
     centres = column.z_bottom + (2.0 * np.arange(column.elements) + 1.0) * half
     last = float(np.max(np.abs(centres - centres[column.primer_element - 1]) / column.vod_m_s
                         + np.hypot(r, z - centres) / medium.s_velocity_m_s))
+    pulse = source.n + 4.0 * math.sqrt(source.n) + 2.0  # duración de g(tau) en tau, con margen (elección de diseño)
     fs = 40.0 * gamma if sample_rate_hz is None else _positive("sample_rate_hz", sample_rate_hz)
-    duration = last + 40.0 / gamma if duration_s is None else _positive("duration_s", duration_s)
+    duration = last + max(40.0, pulse) / gamma if duration_s is None else _positive("duration_s", duration_s)
     samples = math.ceil(duration * fs) + 1
     if samples > _MAX_SAMPLES:
         raise _error("sample_rate_hz", f"and duration_s give a time grid of {samples} samples (at most "
@@ -276,9 +302,9 @@ def heelan_ppv(source, medium, column, r: float, z: float, *, sample_rate_hz: fl
         notes.append(f"charge_exponent = {column.charge_exponent:g} is below 1: the non-linear weights of the column "
                      "(Blair 2008, eqs. 1-3 and 22) have no experimental validation, as their author says "
                      "(pp. 237, 246-247)")
-    if duration_s is not None and duration < last + 10.0 / gamma:
-        notes.append(f"duration_s = {duration:g} s ends before the last arrival plus 10 / gamma "
-                     f"({last + 10.0 / gamma:.4g} s): the peak may be truncated")
+    if duration_s is not None and duration < last + pulse / gamma:
+        notes.append(f"duration_s = {duration:g} s ends before the last arrival plus (n + 4 sqrt(n) + 2) / gamma "
+                     f"({last + pulse / gamma:.4g} s), the length of the pulse: the peak may be truncated")
     if fs < _STEPS_PER_PULSE * gamma:  # paso mayor que 1/(10 gamma)
         notes.append(f"time step = {gamma / fs:.3g} / gamma is longer than 1 / ({_STEPS_PER_PULSE:g} gamma): the "
                      "pulse is under-resolved and the peak may be cut short; leave sample_rate_hz out for the "
@@ -320,6 +346,14 @@ def _seed(seed, sample_rate_hz) -> tuple[list[float], float, list[str]]:
     peak = float(np.abs(s).max())
     if peak == 0.0:
         raise _error("seed", "is zero everywhere: it cannot be normalized to unit peak")
+    dominant = fft_frequency(s, fs)[0] if s.size > 1 else math.nan  # NaN (semilla plana o de una muestra): sin aviso
+    if dominant > fs / _SAMPLES_PER_PERIOD:
+        loss = 1.0 - math.cos(math.pi * dominant / fs)
+        notes.append(_Loud(f"the seed's dominant frequency, {dominant:.4g} Hz, is above a tenth of its sample rate "
+                           f"({fs / _SAMPLES_PER_PERIOD:g} Hz): an arrival between two samples is spread linearly over "
+                           f"them, which lowers its peak by up to 1 - cos(pi f / fs) = {loss:.0%} when it falls "
+                           f"mid-sample; use a seed recorded at a higher sample rate (at least "
+                           f"{_SAMPLES_PER_PERIOD * dominant:.0f} Hz)"))
     return (s / peak).tolist(), fs, notes
 
 
@@ -382,6 +416,8 @@ def _prepare(holes, monitor, seed, sample_rate_hz, law, wave_velocity_m_s, *, we
     samples, fs, notes = _seed(seed, sample_rate_hz)
     law = _vibration_law(law)
     velocity = _positive("wave_velocity_m_s", wave_velocity_m_s)
+    if velocity < _SLOW_WAVE_M_S:
+        notes.append(_Loud(f"wave velocity looks like km/s: wave_velocity_m_s = {velocity:g}, and it must be in m/s"))
     if not isinstance(weighting, str) or weighting not in WEIGHTINGS:
         raise _error("weighting", f"must be one of {list(WEIGHTINGS)}. Received: {weighting!r}")
     if not isinstance(screening, (bool, np.bool_)):
@@ -405,8 +441,10 @@ def _prepare(holes, monitor, seed, sample_rate_hz, law, wave_velocity_m_s, *, we
         notes.append(f"{' and '.join(ignored)} {'is' if one else 'are'} ignored: weighting={weighting!r}"
                      f"{' without screening' if weighting == 'linear' else ''} does not use {'it' if one else 'them'}")
     span = float(t.max() - t.min())
-    if span > _FIRING_SPAN_S:
-        notes.append(f"firing times look like milliseconds: firing_time_s spans {span:g} s and it must be in seconds")
+    step = float(np.diff(np.sort(t)).max(initial=0.0))  # el mayor intervalo entre pozos consecutivos
+    if span > _FIRING_SPAN_S or step > _LONG_DELAY_S:
+        notes.append(_Loud(f"firing times look like milliseconds: firing_time_s spans {span:g} s, with up to "
+                           f"{step:g} s between consecutive holes, and it must be in seconds"))
 
     d = np.hypot(x - mx, y - my)
     if (d == 0.0).any():
@@ -471,6 +509,17 @@ def _prepare(holes, monitor, seed, sample_rate_hz, law, wave_velocity_m_s, *, we
                   "single source (0.2 is the author's first estimate of eta and 0.3 fitted his one field case, an "
                   "acceleration envelope; g comes from one set of field data in Blair 1999 and its unit is inferred); "
                   "holes and monitor are taken at the same level", _FULL_BLAST_LIMITS]
+        # con eta = 0, D_n = 1 y el peso es S_n (ec. 20)
+        shield = np.asarray(_nf.damage_weights(x.tolist(), y.tolist(), w.tolist(), t.tolist(), mx, my, spacing, 0.0))
+        low, near = list(holes.index[shield < _MIN_SCREENING]), list(holes.index[d < _G_NEAREST_MONITOR_M])
+        if low or near:
+            found = ([f"the screening factor S_n is below {_MIN_SCREENING:g} (rows {low})"] if low else []) + (
+                [f"holes are closer than {_G_NEAREST_MONITOR_M:g} m to the monitor (rows {near})"] if near else [])
+            notes.append(_Loud(
+                f"weighting='damage' in the near field: {' and '.join(found)}. S_n (Blair 2008, eq. 20) has no floor, "
+                f"unlike the screening of Blair (1999, p. 346), floored at {_MIN_SCREENING:g} for lack of near-field "
+                f"data, and g was fitted with monitors at {_G_NEAREST_MONITOR_M:g} m or more (Blair 1999, Fig. 7b): "
+                "these weights are an extrapolation of the source's screening term"))
     elif screening:
         counts = np.asarray(_nf.screening_counts(x.tolist(), y.tolist(), t.tolist(), mx, my, spacing))
         weight = np.array([_nf.screening_factor(di, int(n)) for di, n in zip(d, counts)])
@@ -480,6 +529,7 @@ def _prepare(holes, monitor, seed, sample_rate_hz, law, wave_velocity_m_s, *, we
                          index=holes.index)
     if counts is not None:
         table["screening_count"] = counts
+    notes.append(_Loud(_MEDIAN))
     return samples, fs, table, t.tolist(), w.tolist(), notes
 
 
@@ -549,15 +599,22 @@ def simulate_blast(holes: pd.DataFrame, monitor: tuple[float, float], seed, *, s
     8 ms come from Duvall et al. (1963) as reported by Blair (1999, p. 337), who adds that there is nothing special
     about 8 ms: whether two holes separate depends on the seed. ``warnings`` repeats those of the law's predictions
     (extrapolation: one per cause, with the rows) and the caveats of the model chosen, and says when an input looks
-    wrong: firing times that span more than 20 s (they look like milliseconds), an argument that the chosen
-    weighting does not use (``spacing_m``, ``eta``, ``charge_exponent``) and a seed taken from the ``"mic"`` channel.
+    wrong: firing times that span more than 20 s or with more than 1 s between consecutive holes (they look like
+    milliseconds), ``wave_velocity_m_s`` below 100 (it looks like km/s), an argument that the chosen weighting does
+    not use (``spacing_m``, ``eta``, ``charge_exponent``), a seed taken from the ``"mic"`` channel and a seed whose
+    dominant frequency is above a tenth of its sample rate (an arrival between two samples is spread linearly over
+    them, which lowers its peak by up to ``1 - cos(pi f / fs)``). It always says that the amplitudes are the law's
+    median, so about half of the holes exceed them. With ``"damage"`` it warns, with the rows, when a screening factor
+    S_n is below 0.2 or a hole is closer than 99 m to the monitor: S_n has no floor and g was fitted with monitors
+    at 99 m or more (Blair 1999, Fig. 7b), so those weights extrapolate the source. These last warnings (units, the
+    median, the near field of ``"damage"`` and the seed's frequency) are also emitted as ``UserWarning``.
     """
     samples, fs, table, firing, charges, notes = _prepare(
         holes, monitor, seed, sample_rate_hz, law, wave_velocity_m_s, weighting=weighting, spacing_m=spacing_m,
         charge_exponent=charge_exponent, eta=eta, screening=screening)
     v = _superposed(samples, fs, table)
     return BlastResult(float(np.abs(v).max()), np.arange(v.size) / fs, v, table,
-                       _nf.max_charge_per_window(firing, charges), tuple(notes))
+                       _nf.max_charge_per_window(firing, charges), _emitted(notes))
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -598,12 +655,20 @@ def monte_carlo_blast(holes: pd.DataFrame, monitor: tuple[float, float], seed, *
       ``holes``. It is yours to give: the source publishes no delay distribution, and the normal one is a design
       choice. A value above 1 s is an error.
     * ``amplitude_cv`` is the coefficient of variation sigma / mean of the single-hole law (0.25 in Blair's example).
+      The default, 0, ignores the scatter of ``law`` (its ``sigma``, in log10), and the nominal amplitudes are the
+      law's median, which about half of the holes exceed: with 0 the percentiles and the probability of exceeding a
+      level come out too low. When ``law.sigma > 0`` and ``amplitude_cv`` is 0 a warning gives the coefficient of
+      variation of a lognormal with that sigma, ``sqrt(exp((sigma ln 10)**2) - 1)`` (0.356 for sigma = 0.15), for
+      you to pass.
     * The same ``rng_seed`` gives the same peaks.
 
     Of what Blair (1999) randomizes, this covers the firing times and the amplitude; the shape of the seed (his
     fluctuating seed) and the polarity of the transverse component are not modelled. The weights and screening counts
     come from the nominal firing times (a design choice: in the source the screening count changes in each
     simulation, because the firing order does).
+
+    ``warnings`` carries those of :func:`simulate_blast` (the median one always) and the caveats of the Monte Carlo;
+    the median, ``amplitude_cv``, unit, near-field and seed warnings are also emitted as ``UserWarning``.
     """
     unknown = set(weights) - {"weighting", "spacing_m", "charge_exponent", "eta", "screening"}
     if unknown:
@@ -626,11 +691,18 @@ def monte_carlo_blast(holes: pd.DataFrame, monitor: tuple[float, float], seed, *
     for name, value, least in (("simulations", simulations, 1), ("rng_seed", rng_seed, 0)):
         if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) or value < least:
             raise _error(name, f"must be an integer >= {least}. Received: {value!r}")
-    peaks = np.asarray(_nf.monte_carlo_peaks(samples, fs, table["arrival_s"].tolist(), table["amplitude_mm_s"].tolist(),
+    if amplitude_cv == 0 and law.sigma > 0:
+        cv = math.sqrt(math.expm1((law.sigma * math.log(10.0)) ** 2))  # CV de una lognormal (inferido)
+        notes.append(_Loud(f"amplitude_cv = 0 leaves out the scatter of the site law (sigma = {law.sigma:g} in log10): "
+                           "the peaks scatter only with the delays, so the percentiles and the probability of "
+                           "exceeding a level come out too low. The coefficient of variation of a lognormal with that "
+                           f"sigma is sqrt(exp((sigma ln 10)^2) - 1) = {cv:.3g}: pass amplitude_cv={cv:.3g} to "
+                           "include it"))
+    peaks =np.asarray(_nf.monte_carlo_peaks(samples, fs, table["arrival_s"].tolist(), table["amplitude_mm_s"].tolist(),
                                              sigma.tolist(), amplitude_cv, int(simulations), int(rng_seed)))
     return MonteCarloResult(peaks, float(peaks.mean()), float(peaks.std(ddof=1)) if peaks.size > 1 else math.nan,
                             float(np.abs(_superposed(samples, fs, table)).max()),
-                            tuple(notes + [_DELAY_DISTRIBUTION, _FIXED_SEED]))
+                            _emitted(notes + [_DELAY_DISTRIBUTION, _FIXED_SEED]))
 
 
 def delay_sweep(seed, *, sample_rate_hz: float | None = None, delays_s, amplitude_ratio: float = 1.0) -> pd.DataFrame:
@@ -643,7 +715,9 @@ def delay_sweep(seed, *, sample_rate_hz: float | None = None, delays_s, amplitud
     exceeds the length of the seed. The best delay belongs to that seed, that is, to its site and distance.
 
     ``attrs["warnings"]`` is a tuple, empty unless an input looks wrong: a delay above 1 s (it looks like
-    milliseconds) or a seed taken from the ``"mic"`` channel.
+    milliseconds), a seed taken from the ``"mic"`` channel or a seed whose dominant frequency is above a tenth of its
+    sample rate (an arrival between two samples is spread linearly over them and its peak drops; this one is also
+    emitted as a ``UserWarning``).
     """
     samples, fs, notes = _seed(seed, sample_rate_hz)
     ratio = _positive("amplitude_ratio", amplitude_ratio)
@@ -657,5 +731,5 @@ def delay_sweep(seed, *, sample_rate_hz: float | None = None, delays_s, amplitud
                          "be in seconds")
     peaks = [float(np.abs(_nf.superpose(samples, fs, [0.0, delay], [1.0, ratio])).max()) for delay in delays.tolist()]
     out = pd.DataFrame({"delay_s": delays, "peak": peaks, "ratio_to_simultaneous": np.array(peaks) / (1.0 + ratio)})
-    out.attrs["warnings"] = tuple(notes)
+    out.attrs["warnings"] = _emitted(notes)
     return out
