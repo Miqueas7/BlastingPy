@@ -58,3 +58,20 @@ def test_airblast_example(capsys):
         table.append(line)
     assert len(table) - 1 == 8  # the header plus one row per event
     assert any("mixes measuring systems" in line for line in lines)
+
+
+EXAMPLE_4 = pathlib.Path(__file__).resolve().parents[2] / "examples" / "04-flyrock" / "flyrock.py"
+
+
+def test_flyrock_example(capsys):
+    runpy.run_path(str(EXAMPLE_4), run_name="__main__")
+    lines = capsys.readouterr().out.splitlines()
+    assert any(line.startswith("Flyrock") for line in lines)
+    assert any(line.startswith("Clearance") for line in lines)
+    start = next(i for i, line in enumerate(lines) if line.startswith("hole "))
+    table = []
+    for line in lines[start + 1:]:
+        if not line.strip():
+            break
+        table.append(line)
+    assert len(table) == 6  # one row per hole, after the header and the index-name line
