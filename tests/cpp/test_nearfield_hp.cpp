@@ -72,6 +72,16 @@ TEST(NearfieldHp, CriticalPpv) {  // PC1-PC4
     expect_rel(nf::ppv_critical(19.3e6, 6103, 87e9), 1353, 1e-3);
 }
 
+TEST(NearfieldHp, AxisWithBetaBelowAlphaIsFinite) {  // R13, condition derived here
+    const double k = 100, a = 1.0, b = 0.5, q = 2.0;
+    const double e = 1 - b / a;
+    const double analytic = k * q * (std::pow(3.0, e) + std::pow(1.0, e)) / e;  // z = 1 in [0, 4]
+    expect_rel(nf::hp_original(k, a, b, q, 0, 4, 0, 1), analytic, 1e-12);
+    expect_rel(nf::hp_original(k, a, b, q, 0, 4, 1e-6, 1), analytic, 1e-3);
+    EXPECT_TRUE(std::isnan(nf::hp_damage_extent(nf::HpModel::Original, k, a, b, q, 0, 4, 1, 1e9)));
+    EXPECT_THROW(nf::hp_original(k, 0.5, 1.0, q, 0, 4, 0, 1), std::invalid_argument);  // beta >= alpha
+}
+
 TEST(NearfieldHp, Domain) {
     const double nan = std::numeric_limits<double>::quiet_NaN();
     // on the axis inside the charged span: the original model diverges

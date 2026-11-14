@@ -15,6 +15,9 @@
  * - ppv_critical: PPVcrit = T·Vp/E (Onederra y Esen ec. 11; Persson, Holmberg y Lee 1994, p. 247) [V2]. Con E estático
  *   (inferido del recálculo de su Tabla 1); entra en Pa y m/s, sale en mm/s.
  *
+ * - Condición derivada aquí, no leída en una fuente: con r = 0 sobre el tramo cargado el integrando va como
+ *   1/|z' − z|^(β/α); la integral diverge solo si β ≥ α. Con β < α es finita: ∫|u|^(−β/α)du en forma cerrada.
+ *
  * Las entradas no admiten NaN ni infinito; los errores son de dominio (ver validation.hpp).
  */
 
@@ -114,8 +117,14 @@ inline double hp_original(double k, double alpha, double beta, double linear_cha
                           double z_end, double r, double z) {
     detail::check_constants(k, alpha, beta, linear_charge_kg_m);
     detail::check_geometry(z_start, z_end, r, z);
-    validation::require(!(r == 0.0 && z >= z_start && z <= z_end), "r",
-                        "must be > 0 when z lies within the charged span (the integral diverges on the axis)", r);
+    const bool on_charge = r == 0.0 && z >= z_start && z <= z_end;
+    validation::require(!(on_charge && beta >= alpha), "r",
+                        "must be > 0 when z lies within the charged span and beta >= alpha (the integral diverges)", r);
+    if (on_charge) {  // beta < alpha: integrable singularity, closed form of the integral of |u|^(-beta/alpha)
+        const double e = 1.0 - beta / alpha;
+        const double integral = (std::pow(z_end - z, e) + std::pow(z - z_start, e)) / e;
+        return k * std::pow(linear_charge_kg_m * integral, alpha);
+    }
     if (r > 0.0 && std::fabs(beta - 2.0 * alpha) <= 1e-12)
         return k * std::pow(hp_term(linear_charge_kg_m, z_start, z_end, r, z), alpha);
     const double p = beta / (2.0 * alpha), r2 = r * r;
@@ -140,6 +149,7 @@ inline double hp_niosh(double k, double alpha, double beta, double linear_charge
 }
 
 /// Distancia radial r donde el PPV baja a ppv_limit, a la altura z (bisección en (1e-9, 1e4] m; tolerancia 1e-9 m).
+/// Con Original y β ≥ α el PPV crece sin tope sobre el tramo cargado; con β < α es finito en el eje y también puede dar NaN.
 /// NaN si el PPV no llega al límite (en r → 0 queda por debajo, o a 1e4 m sigue por encima).
 inline double hp_damage_extent(HpModel model, double k, double alpha, double beta, double linear_charge_kg_m,
                                double z_start, double z_end, double z, double ppv_limit_mm_s) {
@@ -150,7 +160,8 @@ inline double hp_damage_extent(HpModel model, double k, double alpha, double bet
         return model == HpModel::Niosh ? hp_niosh(k, alpha, beta, linear_charge_kg_m, z_start, z_end, r, z)
                                        : hp_original(k, alpha, beta, linear_charge_kg_m, z_start, z_end, r, z);
     };
-    double lo = 1e-9, hi = 1e4;
+    // Niosh, and Original with beta < alpha, are finite on the axis: start the search at r = 0.
+    double lo = (model == HpModel::Niosh || beta < alpha) ? 0.0 : 1e-9, hi = 1e4;
     if (ppv(lo) < ppv_limit_mm_s || ppv(hi) > ppv_limit_mm_s) return std::numeric_limits<double>::quiet_NaN();
     for (int i = 0; i < 200 && hi - lo > 1e-9; ++i) {
         const double mid = 0.5 * (lo + hi);
