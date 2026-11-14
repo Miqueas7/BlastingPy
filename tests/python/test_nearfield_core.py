@@ -95,3 +95,23 @@ def test_heelan_domain():
         nf.heelan_element(nf.PressureSource(5e9, 6, 2e4), rock, 0.05, 0.1, 0.0, 1.0, [0.0, 1e-3])
     with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter"):
         nf.g_peak(21)
+
+
+def test_superposition_from_python():
+    seed = np.array([0.0, 1.0, 0.0])
+    v = nf.superpose(seed, 1000.0, np.array([0.0, 0.002]), np.array([1.0, -1.0]))
+    assert list(v) == pytest.approx([0.0, 1.0, 0.0, -1.0, 0.0, 0.0], abs=1e-12)
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter 'arrival_times_s'"):
+        nf.superpose(seed, 1000.0, [-1.0], [1.0])
+
+
+def test_full_blast_weights_from_python():
+    inf = float("inf")
+    c = nf.charge_scaling_weights([2, 3, 5], [inf, 0.45, 3.0], 1.0, 0.7)
+    assert c[2] == pytest.approx(3.017024, rel=1e-6)
+    assert nf.screening_factor(100.0, 4, floor=0.0) == pytest.approx(0.176, abs=2e-3)
+    x = np.array([0.0, 5, 10, 15, 20])
+    assert nf.screening_counts(x, np.zeros(5), np.array([4.0, 3, 2, 1, 0]), 1000.0, 0.0, 5.0) == [4, 3, 2, 1, 0]
+    e = nf.damage_weights([0.0, 10, 20], [0.0] * 3, [1.0] * 3, [0.0, 1, 2], 10.0, 1e6, 10.0, 0.2)
+    assert e[1] == pytest.approx(1 / 1.2, rel=1e-3)
+    assert nf.max_charge_per_window([0.0, 0.005, 0.010], [100.0] * 3) == 200.0

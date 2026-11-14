@@ -350,4 +350,26 @@ NB_MODULE(_blastingpy_core, m) {
             "its Blair (2008) weight. Not the Blair and Minchinton (2006) scaled Heelan model.");
     nfd.def("vector_peak", &nearfield::vector_peak, nb::arg("waveform"),
             "Peak vector velocity max sqrt(radial^2 + axial^2) of a waveform (mm/s).");
+    nfd.def("superpose", &nearfield::superpose, nb::arg("seed"), nb::arg("sample_rate_hz"), nb::arg("arrival_times_s"),
+            nb::arg("amplitudes"),
+            "v(t) = sum_j w_j s(t - d_j) (Hinzen 1988 eqs. 3 and 7; Blair 1999 eq. 1a), sampled from t = 0; length = "
+            "ceil(max arrival * fs) + len(seed) + 1; an arrival between samples is spread linearly over its neighbours.");
+    nfd.def("screening_factor", &nearfield::screening_factor, nb::arg("distance_m"), nb::arg("screening_count"),
+            nb::arg("g") = 23337.0, nb::arg("floor") = 0.2,
+            "S = max(floor, 1 / (1 + g h^-2 sqrt(N_S))) (Blair 1999 eqs. 10b-10c); g in m^2 (inferred).");
+    nfd.def("screening_counts", &nearfield::screening_counts, nb::arg("x"), nb::arg("y"), nb::arg("firing_times_s"),
+            nb::arg("monitor_x"), nb::arg("monitor_y"), nb::arg("spacing_m"),
+            "N_S of each hole: holes fired strictly earlier whose centre lies in the rectangle (width = spacing) between "
+            "the hole and the monitor (Blair 1999 Fig. 7a). Results in input order.");
+    nfd.def("charge_scaling_weights", &nearfield::charge_scaling_weights, nb::arg("charges_kg"),
+            nb::arg("nearest_fired_distance_m"), nb::arg("spacing_m"), nb::arg("charge_exponent"),
+            nb::arg("d_factor") = 1.0, nb::arg("p") = 4,
+            "Blair (2008) eq. 10 weights C_n, vectors in initiation order; use inf for the first hole. P = 4 is a design choice.");
+    nfd.def("damage_weights", &nearfield::damage_weights, nb::arg("x"), nb::arg("y"), nb::arg("charges_kg"),
+            nb::arg("firing_times_s"), nb::arg("monitor_x"), nb::arg("monitor_y"), nb::arg("spacing_m"), nb::arg("eta"),
+            nb::arg("g") = 23337.0,
+            "Blair (2008) damage model weights E_n = S_n / D_n (eqs. 16 and 20), in plan view, in input order; g in m^2.");
+    nfd.def("max_charge_per_window", &nearfield::max_charge_per_window, nb::arg("firing_times_s"), nb::arg("charges_kg"),
+            nb::arg("window_s") = 0.008,
+            "Largest charge initiated within any window [t, t + window); 8 ms is Duvall et al. (1963) as reported by Blair (1999).");
 }
