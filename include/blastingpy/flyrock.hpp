@@ -1,6 +1,7 @@
 /**
  * @file flyrock.hpp
- * @brief Proyección de rocas: balística sin arrastre y ecuaciones de Richards y Moore.
+ * @brief Proyección de rocas: balística sin arrastre, Richards y Moore (frente, cráter, eyección de taco), Lundborg,
+ *        McKenzie 2018 y Roth (Gurney y ecuaciones calibradas).
  *
  * Procedencia (docs/investigacion/FUENTES_SPRINT4.md, «Roth (Gurney)» y «Richards y Moore»), todo [V1]:
  * - Alcance a nivel L = v²·sen(2θ)/g: Roth (1979) ec. (1), p. 5; Richards y Moore ec. [4], p. 23.
@@ -13,7 +14,8 @@
  *   mide menos de 1 m (p. 28). g = 9,8 en la fuente; aquí por omisión 9,80665.
  * - rm_min_confinement invierte [7a]/[7b] (álgebra, inferido).
  * - Ángulo del taladro de [7c]: se mide desde la vertical aquí; sen 2θ es igual desde la horizontal (inferido).
- *   Con 0° (vertical) la fórmula da 0 (Tabla 4, p. 30).
+ *   Con 0° (vertical) la fórmula da 0 (Tabla 4, p. 30); la API de Python avisa, porque la fuente dice que los
+ *   verticales necesitan un ajuste.
  *
  * Lundborg, McKenzie y Roth (FUENTES_SPRINT4.md, «Lundborg», «McKenzie», «Roth (Gurney)»):
  * - Lundborg [V2], solo por secundarias (Richards y Moore ecs. [1]-[3], p. 22; McKenzie 2018 diaps. 3-4; Szendrei y
@@ -132,9 +134,9 @@ inline double rm_cratering(double k, double charge_kg_m, double stemming_m, doub
 /// Eyección de taco: ec. [7c]; ángulo del taladro desde la vertical, en [0, 90). Con 0° devuelve 0.
 inline double rm_stemming_ejection(double k, double charge_kg_m, double stemming_m,
                                    double hole_angle_from_vertical_deg, double g = standard_gravity) {
-    validation::require_in_range(hole_angle_from_vertical_deg, 0.0, 90.0, "hole_angle_from_vertical_deg");
-    validation::require(hole_angle_from_vertical_deg < 90.0, "hole_angle_from_vertical_deg",
-                        "must be within [0, 90)", hole_angle_from_vertical_deg);
+    validation::require_finite(hole_angle_from_vertical_deg, "hole_angle_from_vertical_deg");
+    validation::require(hole_angle_from_vertical_deg >= 0.0 && hole_angle_from_vertical_deg < 90.0,
+                        "hole_angle_from_vertical_deg", "must be within [0, 90)", hole_angle_from_vertical_deg);
     return rm_cratering(k, charge_kg_m, stemming_m, g) * std::sin(2.0 * detail::rad(hole_angle_from_vertical_deg));
 }
 
@@ -214,22 +216,38 @@ inline double roth_launch_velocity(double gurney_velocity_m_s, double charge_mas
     return gurney_velocity_m_s * std::sqrt(charge_mass_ratio);
 }
 
-/// Ecuaciones calibradas υ0² = a·(c/m) − b (ecs. 13, 13a, 14, 17). Error si c/m ≤ b/a (velocidad nula o imaginaria).
-inline double roth_calibrated_velocity(RothCalibration rock, double charge_mass_ratio) {
-    double a = 0.0, b = 0.0;
+namespace detail {
+struct RothLine {
+    double a, b;  // υ0² = a·(c/m) − b, (m/s)²
+};
+inline RothLine roth_line(RothCalibration rock) {
     switch (rock) {
-        case RothCalibration::Granite: a = 3.487e6; b = 584.0; break;
-        case RothCalibration::GraniteAllData: a = 3.66e6; b = 518.0; break;
-        case RothCalibration::DolomiteLimestone: a = 3.0e6; b = 200.0; break;
-        case RothCalibration::SandstoneCrater: a = 2.266e6; b = 475.0; break;
+        case RothCalibration::Granite: return {3.487e6, 584.0};
+        case RothCalibration::GraniteAllData: return {3.66e6, 518.0};
+        case RothCalibration::DolomiteLimestone: return {3.0e6, 200.0};
+        default: return {2.266e6, 475.0};
     }
+}
+}  // namespace detail
+
+/// c/m mínimo de cada calibración, b/a: ahí la recta da velocidad nula.
+inline double roth_minimum_charge_mass_ratio(RothCalibration rock) {
+    const auto line = detail::roth_line(rock);
+    return line.b / line.a;
+}
+
+/// Ecuaciones calibradas υ0² = a·(c/m) − b (ecs. 13, 13a, 14, 17). Error si c/m ≤ b/a (velocidad nula o imaginaria).
+/// Cerca del mínimo la recta subestima: predice velocidad casi nula y los datos tienen velocidad finita (p. 21).
+inline double roth_calibrated_velocity(RothCalibration rock, double charge_mass_ratio) {
+    const auto line = detail::roth_line(rock);
     validation::require_positive(charge_mass_ratio, "charge_mass_ratio");
-    const double v2 = a * charge_mass_ratio - b;
-    validation::require(v2 > 0.0, "charge_mass_ratio",
-                        "is at or below the minimum c/m of this calibration (" + validation::detail::num(b / a) +
+    // se compara con b/a y no el signo de a·(c/m) − b: con contracción FMA ese residuo puede salir positivo en b/a
+    const double minimum = line.b / line.a;
+    validation::require(charge_mass_ratio > minimum, "charge_mass_ratio",
+                        "is at or below the minimum c/m of this calibration (" + validation::detail::num(minimum) +
                             "), where the fitted velocity is zero",
                         charge_mass_ratio);
-    return std::sqrt(v2);
+    return std::sqrt(std::fmax(line.a * charge_mass_ratio - line.b, 0.0));
 }
 
 /// √(2E') con el que se normalizó cada calibración: 2300, NaN (la ec. 13a no lo dice), 1880, 1750 m/s.
@@ -259,7 +277,9 @@ inline MethodInfo info(Model model) {
     switch (model) {
         case Model::Ballistics:
             return {"FLY-BALLISTIC", Verification::Primary,
-                    roth + "eqs. (1)-(3), (5), pp. 5-6; " + rm + "eqs. [4]-[5], p. 23"};
+                    roth + "eqs. (1)-(3), (5), pp. 5-6; " + rm + "eqs. [4]-[5], p. 23; Moore, A.J. & Richards, A.B. "
+                    "(2005), consulting report on the calibration of a flyrock predictive model, eqs. [7], [9], [10], "
+                    "p. 11"};
         case Model::RichardsMooreFaceBurst: return {"FLY-RM-FACE", Verification::Primary, rm + "eq. [7a], p. 30"};
         case Model::RichardsMooreCratering: return {"FLY-RM-CRATER", Verification::Primary, rm + "eq. [7b], p. 30"};
         case Model::RichardsMooreStemmingEjection:
@@ -268,8 +288,9 @@ inline MethodInfo info(Model model) {
         case Model::LundborgRange: return {"FLY-LUNDBORG-Q", Verification::Secondary, lund + "; q > 0.2 inferred"};
         case Model::McKenzie2018:
             return {"FLY-MCKENZIE-2018", Verification::Primary,
-                    "McKenzie, C. (2018), flyrock model summary, slide 11: version 2018, coefficient 10; SDoB "
-                    "supplied by the user (its definition is not in any source read)"};
+                    "McKenzie, C. (2018). Flyrock Model Validation. ISEE Australia, 4th Annual Conference, "
+                    "Fremantle, 8-9 Nov 2018; flyrock model summary, slide 11: version 2018, coefficient 10; SDoB "
+                    "supplied by the user in m/kg^(1/3) (its definition is not in any source read)"};
         case Model::RothGurney:
             return {"FLY-ROTH-GURNEY", Verification::Primary, roth + "eqs. (7)-(10), pp. 7 and 10"};
         default:

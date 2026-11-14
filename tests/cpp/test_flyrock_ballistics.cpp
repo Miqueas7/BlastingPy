@@ -3,6 +3,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 #include "blastingpy/flyrock.hpp"
 
@@ -35,7 +36,8 @@ TEST(FlyrockBallistics, RangeToHeight) {  // E13, E24
 }
 
 TEST(FlyrockBallistics, Properties) {
-    EXPECT_DOUBLE_EQ(fr::range_to_height(40, 30, 0), fr::range_level(40, 30));
+    const double level = fr::range_level(40, 30);
+    EXPECT_NEAR(fr::range_to_height(40, 30, 0), level, level * 1e-12);  // dos cálculos distintos: tolerancia relativa
     double best = 0;
     int best_angle = 0;
     for (int a = 1; a < 90; ++a)
@@ -92,6 +94,16 @@ TEST(FlyrockDomain, Errors) {
     EXPECT_THROW(fr::rm_min_confinement(27, 10, 0), std::invalid_argument);
     EXPECT_THROW(fr::rm_stemming_ejection(27, 11, 3, 90), std::invalid_argument);
     EXPECT_THROW(fr::rm_stemming_ejection(27, 11, 3, -1), std::invalid_argument);
+    for (double bad : {-1.0, 90.0, kNan}) {  // un solo chequeo, un solo mensaje
+        try {
+            fr::rm_stemming_ejection(27, 11, 3, bad);
+            FAIL() << bad;
+        } catch (const std::invalid_argument& e) {
+            const std::string what = e.what();
+            EXPECT_NE(what.find("'hole_angle_from_vertical_deg'"), std::string::npos) << what;
+            if (!std::isnan(bad)) EXPECT_NE(what.find("[0, 90)"), std::string::npos) << what;
+        }
+    }
     try {
         fr::rm_face_burst(27, 11, -1);
         FAIL();

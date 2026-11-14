@@ -23,16 +23,18 @@ holes = pd.DataFrame({
 table = fr.compare(holes, k=27.0)
 print("Hole table (ranges in m):")
 print(table[["burden_m", "stemming_m", "rm_charge", "rm_face_burst_m", "rm_cratering_m", "rm_stemming_ejection_m",
-             "rm_max_m", "lundborg_max_m"]].round(1).to_string())
+             "rm_max_m", "lundborg_max_m", "max_model_m"]].round(1).to_string())
 print()
 for message in table.attrs["warnings"]:
     print("  warning:", message)
 
-# 3. The hole that governs: the largest Richards & Moore range.
-worst = table["rm_max_m"].idxmax()
-range_m = float(table.loc[worst, "rm_max_m"])
-print(f"Flyrock: hole {worst} governs, Richards & Moore maximum range {range_m:.0f} m "
-      f"(Lundborg {table.loc[worst, 'lundborg_max_m']:.0f} m)")
+# 3. The blast's clearance is governed by its worst hole: the largest range across the models (max_model_m; ties go
+#    to the larger Richards & Moore range). The models disagree widely; choosing one is the engineer's decision.
+worst = table.sort_values(["max_model_m", "rm_max_m"]).index[-1]
+range_m = float(table.loc[worst, "max_model_m"])
+rm_only = float(table.loc[worst, "rm_max_m"])
+print(f"Flyrock: the blast's clearance is governed by its worst hole, {worst}: largest range across the models "
+      f"{range_m:.0f} m (Richards & Moore {rm_only:.0f} m). Choosing the model is the engineer's decision.")
 
 # 4. Clearance. The models have no safety margin; clearance adds it (people x4, equipment x2) and, for people,
 #    optionally the Peruvian minimum of 500 m. The result says which one governs.
@@ -41,12 +43,13 @@ for target in ("people", "equipment"):
         c = fr.clearance(range_m, target=target, regulation=regulation)
         print(f"Clearance {target}, regulation={regulation}: {c.distance_m:.0f} m (governs: {c.governs}, "
               f"factor {c.factor:g})")
-        for note in c.notes[1:]:
+        for note in c.notes[2:]:  # the first two (no safety margin, one model) are printed once below
             print("  note:", note)
-mild = float(table["rm_max_m"].min())  # a mild hole: 4 x its range is below 500 m, so the regulation governs
-c = fr.clearance(mild, target="people", regulation="PE-DS024-2016-EM")
-print(f"Clearance people for the mildest hole ({mild:.0f} m), regulation=PE-DS024-2016-EM: {c.distance_m:.0f} m "
-      f"(governs: {c.governs})")
+print("  note:", c.notes[0])
+print("  note:", c.notes[1])
+c = fr.clearance(rm_only, target="people", regulation="PE-DS024-2016-EM")
+print(f"For contrast, clearance people with the Richards & Moore only range of hole {worst} ({rm_only:.0f} m): "
+      f"{c.distance_m:.0f} m (governs: {c.governs})")
 print()
 
 # 5. Minimum stemming of the governing hole so the cratering range does not exceed 120 m.
@@ -57,7 +60,7 @@ print(f"Minimum stemming for a 120 m cratering range, hole {worst}: {fr.rm_min_c
 cm = fr.roth_charge_mass_ratio(float(holes.loc[worst, "linear_charge_kg_m"]), 2700.0, float(holes.loc[worst, "burden_m"]))
 gurney = fr.roth_gurney_velocity(4000.0, fr.Explosive.Anfo)
 v = fr.roth_launch_velocity(gurney, cm)
-print(f"Roth, hole {worst}: c/m = {cm:.4f}, Gurney velocity {gurney:.0f} m/s, launch velocity {v:.0f} m/s, "
+print(f"Roth, hole {worst}: c/m = {cm:.2e}, Gurney velocity {gurney:.0f} m/s, launch velocity {v:.0f} m/s, "
       f"maximum range {fr.max_range_level(v):.0f} m")
 print()
 

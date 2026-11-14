@@ -63,6 +63,13 @@ TEST(FlyrockRoth, CalibrationsZeroAtBOverA) {  // E25
     const double b[] = {584, 518, 200, 475};
     for (int i = 0; i < 4; ++i) {
         expect_rel(b[i] / a[i], cm0[i], 0.01);
+        EXPECT_DOUBLE_EQ(fr::roth_minimum_charge_mass_ratio(cal[i]), b[i] / a[i]);
+        // en el mínimo exacto lanza aunque a·(c/m) − b deje un residuo positivo (contracción FMA)
+        const double cm_min = fr::roth_minimum_charge_mass_ratio(cal[i]);
+        EXPECT_THROW(fr::roth_calibrated_velocity(cal[i], cm_min), std::invalid_argument);
+        const double just_above = std::nextafter(cm_min, 1.0);
+        const double v = fr::roth_calibrated_velocity(cal[i], just_above);
+        EXPECT_TRUE(v >= 0.0 && v < 1e-3) << v;
         EXPECT_THROW(fr::roth_calibrated_velocity(cal[i], b[i] / a[i]), std::invalid_argument);
         EXPECT_THROW(fr::roth_calibrated_velocity(cal[i], 0.5 * b[i] / a[i]), std::invalid_argument);
         expect_rel(fr::roth_calibrated_velocity(cal[i], 5e-4), std::sqrt(a[i] * 5e-4 - b[i]), 1e-12);
@@ -98,4 +105,8 @@ TEST(FlyrockInfo, EveryModel) {
         EXPECT_EQ(m.verification, lund ? Verification::Secondary : Verification::Primary);
     }
     EXPECT_NE(fr::info(fr::Model::McKenzie2018).source.find("version 2018, coefficient 10"), std::string::npos);
+    EXPECT_NE(fr::info(fr::Model::McKenzie2018).source.find("Flyrock Model Validation"), std::string::npos);
+    const std::string ballistics = fr::info(fr::Model::Ballistics).source;
+    EXPECT_NE(ballistics.find("Richards, A.B. (2005), consulting report"), std::string::npos);
+    EXPECT_NE(ballistics.find("eqs. [7], [9], [10], p. 11"), std::string::npos);
 }

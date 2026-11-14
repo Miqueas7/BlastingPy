@@ -150,7 +150,9 @@ NB_MODULE(_blastingpy_core, m) {
     cc.def("intersection_frequency", &intersection_frequency, nb::arg("velocity"), nb::arg("displacement"),
            "Frequency (Hz) where constant velocity and constant displacement meet: velocity / (2 pi displacement).");
 
-    nb::module_ fl = m.def_submodule("_flyrock", "Flyrock: drag-free ballistics and Richards & Moore equations.");
+    nb::module_ fl = m.def_submodule(
+        "_flyrock", "Flyrock: drag-free ballistics, Richards & Moore (face burst, cratering, stemming ejection), "
+                    "Lundborg, McKenzie 2018 and Roth (Gurney and calibrated equations).");
     fl.attr("standard_gravity") = flyrock::standard_gravity;
     const double g0 = flyrock::standard_gravity;
     fl.def("range_level", &flyrock::range_level, nb::arg("velocity_m_s"), nb::arg("launch_angle_deg"),
@@ -206,7 +208,10 @@ NB_MODULE(_blastingpy_core, m) {
     fl.def("roth_calibrated_velocity", &flyrock::roth_calibrated_velocity, nb::arg("rock"),
            nb::arg("charge_mass_ratio"),
            "Roth calibrated velocity sqrt(a c/m - b); valid for roth_reference_gurney_velocity(rock). "
-           "Raises if c/m is at or below b/a.");
+           "Raises if c/m is at or below b/a. Near b/a the fit predicts near-zero velocities while Roth's data show "
+           "finite ones (p. 21): it underestimates there.");
+    fl.def("roth_minimum_charge_mass_ratio", &flyrock::roth_minimum_charge_mass_ratio, nb::arg("rock"),
+           "Minimum c/m of a Roth calibration, b/a, where the fitted velocity is zero.");
     fl.def("roth_reference_gurney_velocity", &flyrock::roth_reference_gurney_velocity, nb::arg("rock"),
            "Gurney velocity (m/s) each calibration was normalized with; NaN for GraniteAllData (not stated).");
     nb::enum_<flyrock::Model>(fl, "Model", "Flyrock model, for info().")

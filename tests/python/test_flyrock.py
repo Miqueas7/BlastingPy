@@ -1,5 +1,7 @@
 import math
+import warnings
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -51,7 +53,8 @@ def test_compare_table():
 def test_compare_optional_models():
     out = fl.compare(holes(sdob_m_kg13=0.6, powder_factor_kg_m3=1.0), k=13.5)
     assert out["mckenzie_2018_m"][0] == pytest.approx(fl.mckenzie_max_range(0.6, 165))
-    assert out["lundborg_q_m"][0] == pytest.approx(fl.lundborg_range(165, 1.0))
+    with pytest.warns(UserWarning, match="underestimate"):  # 743 m, below Lundborg's 905 m maximum
+        assert out["lundborg_q_m"][0] == pytest.approx(fl.lundborg_range(165, 1.0))
     assert {"mckenzie_2018_m", "lundborg_q_m"} <= set(out.attrs["methods"])
 
 
@@ -114,3 +117,130 @@ def test_clearance_user_factor_and_errors():
     for r in (0, -5, math.nan):
         with pytest.raises(ValueError, match="range_m"):
             fl.clearance(r, target="people")
+
+
+def quiet(func, *args, **kwargs):
+    """Calls func and fails if it emits any warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        return func(*args, **kwargs)
+
+
+def test_linear_charge_density_in_g_cc_is_an_error():
+    for bad in (0.85, 1.15, 250.0, 2500.0):
+        with pytest.raises(ValueError, match=r"'explosive_density_kg_m3'.*kg/m3 \(g/cc by mistake\?\)"):
+            fl.linear_charge(165, bad)
+    assert fl.linear_charge(165, 300) > 0 and fl.linear_charge(165, 2000) > 0
+    df = holes().drop(columns=["linear_charge_kg_m"])
+    df["explosive_density_kg_m3"] = [850.0, 0.85, 850.0]
+    with pytest.raises(ValueError, match=r"g/cc by mistake.*'explosive_density_kg_m3', row 1"):
+        fl.compare(df, k=13.5)
+
+
+def test_compare_implied_density():
+    with pytest.raises(ValueError, match=r"'linear_charge_kg_m'.*\[1\].*2000 kg/m3"):
+        fl.compare(holes(linear_charge_kg_m=[35.6, 60.0, 11.0]), k=13.5)  # 2806 kg/m3 in 165 mm: impossible
+    out = fl.compare(holes(linear_charge_kg_m=[35.6, 5.0, 11.0]), k=13.5)  # 234 kg/m3: decoupled, warning only
+    w = [x for x in out.attrs["warnings"] if "300 kg/m3" in x]
+    assert len(w) == 1 and "[1]" in w[0]
+    assert not any("300 kg/m3" in x for x in fl.compare(holes(), k=13.5).attrs["warnings"])
+
+
+def test_compare_nan_in_optional_columns():
+    df = holes(sdob_m_kg13=[0.6, math.nan, 0.6], powder_factor_kg_m3=[1.0, 1.0, math.nan])
+    df.loc[0, "charge_length_m"] = math.nan
+    df.loc[1, "hole_angle_from_vertical_deg"] = math.nan
+    out = fl.compare(df, k=13.5)
+    assert math.isnan(out["mckenzie_2018_m"][1]) and out["mckenzie_2018_m"][0] > 0
+    assert math.isnan(out["lundborg_q_m"][2]) and out["lundborg_q_m"][0] > 0
+    assert out["rm_charge"][0] == pytest.approx(35.6)  # per-metre charge
+    assert out["rm_stemming_ejection_m"][1] == 0
+    vertical = [x for x in out.attrs["warnings"] if x.startswith("vertical hole")]
+    assert len(vertical) == 1 and "[0, 1, 2]" in vertical[0]  # rows 0 and 2 are 0 degrees, row 1 is NaN
+    assert np.isfinite(out["max_model_m"]).all()
+    for column, value, row in (("sdob_m_kg13", math.inf, 1), ("charge_length_m", -1.0, 0),
+                               ("powder_factor_kg_m3", 0.0, 2), ("hole_angle_from_vertical_deg", math.inf, 0)):
+        bad = holes(sdob_m_kg13=0.6, powder_factor_kg_m3=1.0)
+        bad.loc[row, column] = value
+        with pytest.raises(ValueError, match=rf"'{column}', row {row}"):
+            fl.compare(bad, k=13.5)
+
+
+def test_stemming_ejection_vertical_warns():
+    with pytest.warns(UserWarning, match="vertical"):
+        assert fl.rm_stemming_ejection(27, 11, 3.0, 0) == 0.0
+    assert quiet(fl.rm_stemming_ejection, 27, 11, 3.0, 20, g=9.8) == pytest.approx(62, abs=0.5)
+
+
+def test_rm_k_outside_published_range_warns():
+    calls = ((fl.rm_launch_velocity, (11, 2.6)), (fl.rm_face_burst, (11, 2.6)), (fl.rm_cratering, (11, 3.0)),
+             (fl.rm_stemming_ejection, (11, 3.0, 20)), (fl.rm_min_confinement, (11, 100)))
+    for func, args in calls:
+        for k in (2.7, 40):
+            with pytest.warns(UserWarning, match=r"\[13.5, 37\]") as rec:
+                func(k, *args)
+            assert rec[0].filename == __file__  # points at the caller, not at the wrapper
+        for k in (13.5, 27, 37):
+            quiet(func, k, *args)
+    assert any("[13.5, 37]" in x for x in fl.compare(holes(), k=2.7).attrs["warnings"])
+    assert not any("[13.5, 37]" in x for x in fl.compare(holes(), k=27).attrs["warnings"])
+
+
+def test_roth_calibrated_near_minimum_warns():
+    rock = fl.RothCalibration.Granite
+    cm_min = fl.roth_minimum_charge_mass_ratio(rock)
+    assert cm_min == pytest.approx(584 / 3.487e6)
+    with pytest.warns(UserWarning, match="underestimate"):
+        assert fl.roth_calibrated_velocity(rock, 1.01 * cm_min) == pytest.approx(2.42, rel=0.01)
+    assert quiet(fl.roth_calibrated_velocity, rock, 5e-4) == pytest.approx(math.sqrt(3.487e6 * 5e-4 - 584))
+
+
+def test_lundborg_powder_factor_underestimates():
+    with pytest.warns(UserWarning, match="underestimate"):
+        assert fl.lundborg_range(165, 0.25) == pytest.approx(46.4, rel=0.01)
+    assert quiet(fl.lundborg_range, 101.6, 1.4) > fl.lundborg_max_range(101.6)
+    out = fl.compare(holes(powder_factor_kg_m3=[0.25, 1.4, 1.4]), k=13.5)
+    w = [x for x in out.attrs["warnings"] if "lundborg_q_m" in x]
+    assert len(w) == 1 and "[0]" in w[0]
+    assert any("Roth" in c and "underestimate" in c for c in out.attrs["critiques"])
+
+
+def test_mckenzie_sdob_in_feet_warns():
+    with pytest.warns(UserWarning, match=r"m/kg\^\(1/3\), not ft/lb\^\(1/3\)"):
+        fl.mckenzie_max_range(2.52, 165)
+    quiet(fl.mckenzie_max_range, 2.4, 165)
+    out = fl.compare(holes(sdob_m_kg13=[0.6, 0.6, 2.52]), k=13.5)
+    w = [x for x in out.attrs["warnings"] if "ft/lb^(1/3)" in x]
+    assert len(w) == 1 and "[2]" in w[0]
+
+
+def test_compare_max_model_and_disagreement():
+    out = fl.compare(holes(sdob_m_kg13=[0.6, math.nan, 0.6], powder_factor_kg_m3=1.0), k=13.5)
+    cols = ["rm_max_m", "lundborg_max_m", "lundborg_q_m", "mckenzie_2018_m"]
+    assert out["max_model_m"].tolist() == pytest.approx(out[cols].max(axis=1).tolist())
+    over = list(out.index[out["max_model_m"] > 2 * out["rm_max_m"]])
+    w = [x for x in out.attrs["warnings"] if "more than twice" in x]
+    assert over and len(w) == 1 and str(over) in w[0]
+    assert out["rm_max_m"].tolist() == np.maximum(out["rm_face_burst_m"], out["rm_cratering_m"]).tolist()
+
+
+def test_compare_angle_not_given_and_up_front_checks():
+    out = fl.compare(holes().drop(columns=["hole_angle_from_vertical_deg"]), k=13.5)
+    assert any("angle not given: assumed vertical" in x for x in out.attrs["warnings"])
+    bad = holes()
+    bad.loc[0, "burden_m"] = -1.0
+    for kw, name in (({"k": -1}, "k"), ({"k": True}, "k"), ({"k": 13.5, "g": 0}, "g")):
+        with pytest.raises(ValueError, match=rf"parameter '{name}'") as e:
+            fl.compare(bad, **kw)
+        assert "column" not in str(e.value)
+
+
+def test_clearance_one_model_note_and_regulation_ignored():
+    for target in ("people", "equipment"):
+        c = fl.clearance(95, target=target)
+        assert "range_m comes from one model: see compare() for the others" in c.notes
+    e = fl.clearance(95, target="equipment", regulation="PE-DS024-2016-EM")
+    assert e.regulation is None
+    for kw in ({"range_m": True}, {"range_m": 95, "factor": True}):
+        with pytest.raises(ValueError, match="Domain error"):
+            fl.clearance(target="people", **kw)
