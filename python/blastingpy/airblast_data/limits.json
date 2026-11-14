@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "reference_db": "dB re 20 uPa; the linear systems are peak levels, c-slow is a C-weighted slow-response level",
+  "sources": "docs/investigacion/FUENTES_SPRINT3.md, section 'Límites'",
+  "limits": [
+    {
+      "standard": "USBM-RI8485-1980", "system": "0.1Hz", "level_db": 134, "wording": "0.1-Hz high-pass system",
+      "notes": [],
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Conclusions, p. 66 (PDF p. 72)",
+      "verification": "V1"
+    },
+    {
+      "standard": "USBM-RI8485-1980", "system": "2Hz", "level_db": 133, "wording": "2-Hz high-pass system",
+      "notes": [],
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Conclusions, p. 66 (PDF p. 72)",
+      "verification": "V1"
+    },
+    {
+      "standard": "USBM-RI8485-1980", "system": "6Hz", "level_db": 129, "wording": "5- or 6-Hz high-pass system",
+      "notes": ["Linear peak; the abstract (p. 1) prints it as '129 dBL (6 Hz)'; a 5-Hz system uses this row too"],
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Conclusions, p. 66 (PDF p. 72)",
+      "verification": "V1"
+    },
+    {
+      "standard": "USBM-RI8485-1980", "system": "c-slow", "level_db": 105, "wording": "C-slow (events not exceeding 2-sec duration)",
+      "notes": ["Only for events not exceeding 2 s duration (RI 8485, p. 66)",
+                "C-weighted slow response is not a linear peak: a linear peak cannot be compared with it"],
+      "citation": "Siskind, Stachura, Stagg & Kopp (1980). Structure Response and Damage Produced by Airblast From Surface Mining. U.S. Bureau of Mines, Report of Investigations 8485, Conclusions, p. 66 (PDF p. 72)",
+      "verification": "V1"
+    },
+    {
+      "standard": "OSMRE-30CFR816.67", "system": "0.1Hz", "level_db": 134, "wording": "0.1 Hz or lower—flat response",
+      "notes": ["Only when approved by the regulatory authority (30 CFR 816.67(b)(1)(i), note 1)"],
+      "citation": "30 CFR 816.67(b)(1)(i), table of maximum airblast levels (edition 7-1-23, govinfo)",
+      "verification": "V1"
+    },
+    {
+      "standard": "OSMRE-30CFR816.67", "system": "2Hz", "level_db": 133, "wording": "2 Hz or lower—flat response",
+      "notes": [],
+      "citation": "30 CFR 816.67(b)(1)(i), table of maximum airblast levels (edition 7-1-23, govinfo)",
+      "verification": "V1"
+    },
+    {
+      "standard": "OSMRE-30CFR816.67", "system": "6Hz", "level_db": 129, "wording": "6 Hz or lower—flat response",
+      "notes": [],
+      "citation": "30 CFR 816.67(b)(1)(i), table of maximum airblast levels (edition 7-1-23, govinfo)",
+      "verification": "V1"
+    },
+    {
+      "standard": "OSMRE-30CFR816.67", "system": "c-slow", "level_db": 105, "wording": "C-weighted—slow response",
+      "notes": ["Only when approved by the regulatory authority (30 CFR 816.67(b)(1)(i), note 1)",
+                "C-weighted slow response is not a linear peak: a linear peak cannot be compared with it"],
+      "citation": "30 CFR 816.67(b)(1)(i), table of maximum airblast levels (edition 7-1-23, govinfo)",
+      "verification": "V1"
+    }
+  ]
+}

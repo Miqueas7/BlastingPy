@@ -176,6 +176,41 @@ def test_optional_numeric_column_may_be_empty_and_is_not_converted(tmp_path):
     assert np.isnan(df["ppv_t_mm_s"][0]) and df["ppv_t_mm_s"][1] == pytest.approx(12.7)
 
 
+def _airblast_events(tmp_path, units, text="Dist;Carga;PPV;AB\n100;10;1;0,0145\n200;10;2;\n"):
+    p = _csv(tmp_path, text)
+    return read_events(p, columns={**COLS, "airblast_pa": "AB"}, units=units, ppv_kind="vertical")
+
+
+def test_airblast_column_in_psi_kpa_db_and_imperial(tmp_path):
+    df = _airblast_events(tmp_path, {"pressure": "psi"})
+    assert df["airblast_pa"][0] == pytest.approx(99.97, rel=1e-4) and np.isnan(df["airblast_pa"][1])
+    assert df.columns.tolist()[-1] == "airblast_pa"
+    kpa = _airblast_events(tmp_path, {"pressure": "kPa"}, "Dist;Carga;PPV;AB\n100;10;1;0,1\n")
+    assert kpa["airblast_pa"][0] == pytest.approx(100.0)
+    db = _airblast_events(tmp_path, {"pressure": "dB"}, "Dist;Carga;PPV;AB\n100;10;1;134\n200;10;2;-5\n")
+    assert db["airblast_pa"][0] == pytest.approx(100.24, rel=1e-4) and db["airblast_pa"][1] > 0
+    assert _airblast_events(tmp_path, "imperial")["airblast_pa"][0] == pytest.approx(99.97, rel=1e-4)
+    assert _airblast_events(tmp_path, "metric", "Dist;Carga;PPV;AB\n100;10;1;100\n")["airblast_pa"][0] == 100.0
+
+
+def test_airblast_non_positive_pa_psi_kpa_is_a_cell_error(tmp_path):
+    for unit in ("Pa", "kPa", "psi"):
+        with pytest.raises(ValueError, match=r"column 'AB' \(airblast_pa\), row 3: expected a positive value"):
+            _airblast_events(tmp_path, {"pressure": unit}, "Dist;Carga;PPV;AB\n100;10;1;1\n200;10;2;0\n")
+
+
+def test_airblast_db_empty_cell_is_nan_and_absurd_level_is_a_cell_error(tmp_path):
+    df = _airblast_events(tmp_path, {"pressure": "dB"}, "Dist;Carga;PPV;AB\n100;10;1;134\n200;10;2;\n")
+    assert df["airblast_pa"][0] == pytest.approx(100.24, rel=1e-4) and np.isnan(df["airblast_pa"][1])
+    with pytest.raises(ValueError, match=r"column 'AB' \(airblast_pa\), row 3"):
+        _airblast_events(tmp_path, {"pressure": "dB"}, "Dist;Carga;PPV;AB\n100;10;1;134\n200;10;2;10000\n")
+
+
+def test_unknown_pressure_unit(tmp_path):
+    with pytest.raises(ValueError, match="unknown unit 'bar' for 'pressure'"):
+        _airblast_events(tmp_path, {"pressure": "bar"})
+
+
 def test_unknown_file_type_and_source(tmp_path):
     p = _csv(tmp_path, "x", name="e.txt")
     with pytest.raises(ValueError, match=r"parameter 'source'"):

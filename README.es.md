@@ -89,6 +89,64 @@ que muestra el software de tu sismógrafo.
   menos el resumen avisa. El desplazamiento integra cada medio ciclo como la suma de V por el paso de tiempo y divide
   entre dos el mayor, como describe el manual de Instantel.
 
+## Airblast
+
+`blastingpy.airblast` ajusta la ley del sitio a la sobrepresión pico, la compara con los límites de airblast y trae las
+ecuaciones publicadas. Los hechos, las páginas y las marcas están en
+[docs/investigacion/FUENTES_SPRINT3.md](docs/investigacion/FUENTES_SPRINT3.md).
+
+```python
+from blastingpy import airblast, waveform
+
+events = waveform.events_from_records(records, distance_m=[150, 200, 250], charge_kg=[40, 80, 60])
+law = airblast.fit(events)                       # ley de raíz cúbica sobre airblast_pa
+limit = airblast.limit_db("OSMRE-30CFR816.67", system="2Hz")
+charge = airblast.max_charge(law, 400.0, limit.pressure_pa)
+verdict = airblast.evaluate(events, "OSMRE-30CFR816.67", system="2Hz")
+```
+
+Una versión completa y ejecutable con datos sintéticos está en [examples/03-airblast](examples/03-airblast/).
+
+- **Unidades.** Por dentro todo es Pa. `airblast.to_db` / `from_db` convierten con P0 = 20 µPa; `read_events(...,
+  units={"pressure": "Pa" | "kPa" | "psi" | "dB"})` y `units.to_si` aceptan Pa, kPa y psi. Los eventos traen
+  `airblast_pa` y `airblast_freq_hz`; `waveform.events_from_records` los llena desde el micrófono.
+- **Ley del sitio.** `airblast.fit` es la regresión de la ley de vibraciones con la forma de raíz cúbica,
+  P = K (D / W^(1/3))^-beta, sobre `airblast_pa`: la misma estadística, con cota superior K 10^(z sigma) (la Tabla B-1
+  de RI 8485 ajusta el airblast así). `predict`, `max_charge` y `distance_for` funcionan como en `attenuation`.
+  `outliers` y `residuals` se refieren a las filas usadas en el ajuste.
+- **Una campaña solo de airblast** se pasa como un DataFrame con `distance_m`, `charge_kg` y `airblast_pa`.
+- **El sistema de medición es obligatorio.** La librería se niega a comparar con un límite sin él.
+- **Un nivel ponderado C lento no es un pico lineal:** con `system="c-slow"` todo veredicto es `not_comparable`, y también una ecuación publicada C-lento frente a cualquier límite. Una ecuación publicada es una mediana: `predict_published` y `evaluate_prediction` avisan siempre que cerca de la mitad de las voladuras la superan.
+
+| Sistema | USBM RI 8485 (1980) | OSMRE 30 CFR 816.67 |
+|---|---|---|
+| `0.1Hz` (corte inferior de 0,1 Hz o menos) | 134 dB | 134 dB, solo si la autoridad reguladora lo aprueba |
+| `2Hz` | 133 dB | 133 dB |
+| `6Hz` (un sistema de 5 Hz usa esta fila) | 129 dB | 129 dB |
+| `c-slow` (ponderado C, lento) | 105 dB, eventos de hasta 2 s | 105 dB, solo si la autoridad reguladora lo aprueba |
+
+`airblast.system_from_cutoff(low_cutoff_hz)` da el sistema de un micrófono lineal. El límite depende del corte
+inferior porque un nivel en dB es el pico de lo que el micrófono deja pasar: cuanto más bajo el corte, más presión de
+baja frecuencia cuenta, y por eso cada sistema tiene su propio límite.
+
+Las ecuaciones publicadas (`list_equations`, `published`, `predict_published`) son medianas, sin cota superior, atadas
+al sistema con que se ajustaron. Catorce vienen de la Tabla B-1 de RI 8485, dos del BLEP de OSMRE y una de AS 2187.2.
+
+| Id de la ecuación | Sistema | Marca |
+|---|---|---|
+| `USBM-RI8485/coal-highwall/{0.1Hz,2Hz,5Hz,c-slow}` | el del nombre | V1 |
+| `USBM-RI8485/coal-parting/{0.1Hz,2Hz,5Hz,c-slow}` | el del nombre | V1 |
+| `USBM-RI8485/metal-mine-highwall/0.1Hz` | 0,1 Hz | V1 |
+| `USBM-RI8485/quarry/0.1Hz`, `USBM-RI8485/quarry-direction-of-initiation/0.1Hz`, `USBM-RI8485/quarry-behind-face/0.1Hz`, `USBM-RI8485/quarry-opposite-initiation/0.1Hz`, `USBM-RI8485/quarry-front-of-face/0.1Hz` | 0,1 Hz | V1 |
+| `OSMRE-BLEP/highwall`, `OSMRE-BLEP/parting` | no se dice | V1 |
+| `AS2187.2-2006/free-face` | no se dice | V2 |
+
+Las dos ecuaciones del BLEP salen de ajustes de 0,1 Hz (lo dice RI 8485; el BLEP mismo no dice el sistema), pero el BLEP las compara con el límite de 2 Hz;
+`evaluate_prediction` avisa cuando el sistema de la ecuación difiere del del límite. AS 2187.2 es [V2], de una sola
+fuente secundaria.
+
+No entran: la corrección por viento, los límites de confort australianos y AS 2187.2 desde la norma misma.
+
 ## Convenciones
 
 - **Unidades.** Dentro de la librería todo es SI: m, kg, mm/s, Hz. `read_events(units="imperial")` (o un diccionario por
@@ -97,7 +155,7 @@ que muestra el software de tu sismógrafo.
   en la práctica de BIVDEP de OSMRE. Para la cota unilateral del 95 % usa
   `attenuation.fit(events, z=attenuation.normal_quantile(0.95))` (z = 1,645). `max_charge` y `predict_ppv` usan la cota
   superior por omisión; pasa `attenuation.Level.Median` para la mediana.
-- **Avisos.** Un ajuste con menos de 30 eventos, con `beta <= 0`, o una predicción fuera del rango de distancia o de
+- **Avisos.** Un ajuste de vibración con menos de 30 eventos (el de sobrepresión no avisa por eso), con `beta <= 0`, o una predicción fuera del rango de distancia o de
   carga del ajuste traen avisos (`law.warnings`, `result.warnings`). Una ley con `beta <= 0` no se usa para predecir.
   Una ley con `sigma == 0` o `z == 0` (por ejemplo, `make_site_law` sin `sigma`) tiene la cota superior igual a la
   mediana: sus predicciones con la cota avisan que el resultado no tiene margen de seguridad.

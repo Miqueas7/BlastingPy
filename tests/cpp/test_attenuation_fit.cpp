@@ -286,3 +286,38 @@ TEST(MakeSiteLaw, RejectsInvalidParameters) {
                   .rfind("Domain error [BlastingPy]: parameter 'charge_exponent'", 0),
               0u);
 }
+
+// Sobrepresión (sprint 3): misma regresión, con cita de RI 8485 y avisos sin PPV.
+TEST(FitSiteLaw, AirblastCitesRI8485AndSpeaksOfOverpressure) {
+    using blastingpy::Quantity;
+    const auto ev = grid(5000.0, 1.2, 1.0 / 3.0, false);
+    const auto f = fit_site_law(ev.d, ev.w, ev.v, Law::CubeRoot, 2.0, 3.0, Quantity::Airblast);
+    EXPECT_EQ(f.info.method_id, "AIR-CBRT-USBM8485");
+    EXPECT_EQ(f.info.verification, Verification::Primary);
+    EXPECT_NE(f.info.source.find("RI 8485"), std::string::npos);
+    EXPECT_TRUE(f.warnings.empty());  // 15 eventos: sin la regla de 30 de BIVDEP
+
+    const std::vector<double> d = {100, 200, 400, 800}, w(4, 100.0), p = {1, 2, 4, 8};
+    const auto g = fit_site_law(d, w, p, Law::CubeRoot, 2.0, 3.0, Quantity::Airblast);
+    ASSERT_EQ(g.warnings.size(), 1u);
+    EXPECT_NE(g.warnings[0].find("overpressure does not decrease"), std::string::npos);
+    EXPECT_FALSE(has(g.warnings, "PPV"));
+
+    const auto bad = error_of([&] { fit_site_law(d, w, {1, 0, 4, 8}, Law::CubeRoot, 2.0, 3.0, Quantity::Airblast); });
+    EXPECT_EQ(bad.rfind("Domain error [BlastingPy]: parameter 'airblast_pa'", 0), 0u);
+    const auto len = error_of([&] { fit_site_law(d, {1, 2}, p, Law::CubeRoot, 2.0, 3.0, Quantity::Airblast); });
+    EXPECT_NE(len.find("same length as airblast_pa"), std::string::npos);
+    const auto few = error_of([&] { fit_site_law({1, 2}, {1, 1}, {2, 1}, Law::CubeRoot, 2.0, 3.0, Quantity::Airblast); });
+    EXPECT_EQ(few.rfind("Domain error [BlastingPy]: parameter 'airblast_pa'", 0), 0u);
+    EXPECT_THROW(fit_site_law(d, w, p, Law::SquareRoot, 2.0, 3.0, Quantity::Airblast), std::invalid_argument);
+}
+
+TEST(MakeSiteLaw, InfoOverride) {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const blastingpy::MethodInfo info{"USBM-RI8485/quarry/0.1Hz", Verification::Primary, "RI 8485, Table B-1"};
+    const auto f = make_site_law(Law::CubeRoot, 1000.0, 0.711, nan, 0.0, 2.0, info);
+    EXPECT_EQ(f.info.method_id, info.method_id);
+    EXPECT_EQ(f.info.verification, Verification::Primary);
+    EXPECT_EQ(f.info.source, info.source);
+    EXPECT_EQ(make_site_law(Law::CubeRoot, 1000.0, 0.711).info.verification, Verification::UserDefined);
+}

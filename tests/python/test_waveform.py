@@ -218,6 +218,19 @@ def test_event_row_has_the_canonical_columns_and_values():
     assert waveform.to_event_row(s, distance_m=120.0, charge_kg=60.0, date=other)["date"] == other
 
 
+def test_event_row_airblast_from_the_microphone():
+    ch = _channels({"transverse": 3.0, "vertical": 5.0, "longitudinal": 2.0, "mic": 50.0})
+    s = waveform.analyze(_record(ch))
+    row = waveform.to_event_row(s, distance_m=120.0, charge_kg=60.0)
+    assert row["airblast_pa"] == pytest.approx(50.0, rel=0.01)
+    assert row["airblast_pa"] == s.mic_pspl_pa
+    assert row["airblast_freq_hz"] == s.channels["mic"].zc_frequency_hz and math.isfinite(row["airblast_freq_hz"])
+    geo = {k: v for k, v in ch.items() if k != "mic"}
+    s = waveform.analyze(_record(geo, units=G))
+    row = waveform.to_event_row(s, distance_m=120.0, charge_kg=60.0)
+    assert math.isnan(row["airblast_pa"]) and math.isnan(row["airblast_freq_hz"])
+
+
 def test_event_row_ties_go_to_transverse_then_vertical():
     ch = _channels({"transverse": 4.0, "vertical": 4.0, "longitudinal": 1.0})
     s = waveform.analyze(_record(ch, units=G, start=None))

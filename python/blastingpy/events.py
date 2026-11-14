@@ -3,8 +3,9 @@
 The result has the columns that were mapped, in this order: ``distance_m``, ``charge_kg``, ``ppv_mm_s`` (required),
 ``ppv_kind`` (``"component_max"``, ``"vector_sum"`` or ``"vertical"``; from the ``ppv_kind`` argument or a column) and the
 optional ``frequency_hz``, ``date``, ``point``, ``ppv_t_mm_s``, ``ppv_v_mm_s``, ``ppv_l_mm_s``, ``freq_t_hz``,
-``freq_v_hz``, ``freq_l_hz``, ``pvs_mm_s``. Other columns of the file are dropped. Distances, charges and velocities are
-converted to m, kg and mm/s; frequencies are Hz and never converted; ``date`` and ``point`` are kept as read.
+``freq_v_hz``, ``freq_l_hz``, ``pvs_mm_s``, ``airblast_pa`` (peak overpressure, linear) and ``airblast_freq_hz``. Other
+columns of the file are dropped. Distances, charges, velocities and pressures are converted to m, kg, mm/s and Pa;
+frequencies are Hz and never converted; ``date`` and ``point`` are kept as read.
 
 Decimal mark, when ``decimal`` is None: in a ``;`` CSV it is the comma (a point is a thousands mark there and is
 rejected); in a ``,`` CSV it is the point (a comma inside a quoted number is a thousands mark and is rejected); tab CSVs,
@@ -15,7 +16,9 @@ rejected cell names its column and row and asks for ``decimal=``.
 Row handling: a row with every mapped cell empty is skipped silently; a row with an empty PPV is skipped and counted in a
 single ``UserWarning``; a row with a PPV but no distance or charge is a ``ValueError``. Cells listed in ``na_values``
 count as empty. Row numbers in errors are the ones the user sees in the sheet (header = 1), or ``row index N`` (position)
-for a DataFrame source.
+for a DataFrame source. The rule is the vibration one: a row without PPV is skipped even if it has an
+overpressure. An airblast-only campaign is built as a DataFrame with ``distance_m``, ``charge_kg`` and ``airblast_pa``
+(no ``read_events`` call).
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from __future__ import annotations
 import csv
 import importlib.resources
 import io
+import math
 import os
 import re
 import warnings
@@ -30,23 +34,26 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from ._blastingpy_core import _airblast as _core
 from .units import to_si
 
 __all__ = ["read_events", "write_events_template"]
 
 _REQUIRED = ("distance_m", "charge_kg", "ppv_mm_s")
 _NUMERIC_OPTIONAL = ("frequency_hz", "ppv_t_mm_s", "ppv_v_mm_s", "ppv_l_mm_s", "freq_t_hz", "freq_v_hz", "freq_l_hz",
-                     "pvs_mm_s")
+                     "pvs_mm_s", "airblast_pa", "airblast_freq_hz")
 # Orden de salida de las columnas.
 _ORDER = ("distance_m", "charge_kg", "ppv_mm_s", "ppv_kind", "frequency_hz", "date", "point", "ppv_t_mm_s",
-          "ppv_v_mm_s", "ppv_l_mm_s", "freq_t_hz", "freq_v_hz", "freq_l_hz", "pvs_mm_s")
+          "ppv_v_mm_s", "ppv_l_mm_s", "freq_t_hz", "freq_v_hz", "freq_l_hz", "pvs_mm_s", "airblast_pa", "airblast_freq_hz")
 _KINDS = ("component_max", "vector_sum", "vertical")
 # Magnitud de `units` -> (unidades aceptadas, unidad métrica); "mm" de to_si no sirve: se queda en mm, no pasa a m.
-_UNITS = {"distance": ("m", "ft"), "charge": ("kg", "lb"), "velocity": ("mm/s", "in/s")}
-_IMPERIAL = {"distance": "ft", "charge": "lb", "velocity": "in/s"}
+_UNITS = {"distance": ("m", "ft"), "charge": ("kg", "lb"), "velocity": ("mm/s", "in/s"),
+          "pressure": ("Pa", "kPa", "psi", "dB")}
+_IMPERIAL = {"distance": "ft", "charge": "lb", "velocity": "in/s", "pressure": "psi"}
 # Magnitud de cada columna convertida a SI.
 _QUANTITY = {"distance_m": "distance", "charge_kg": "charge", "ppv_mm_s": "velocity", "ppv_t_mm_s": "velocity",
-             "ppv_v_mm_s": "velocity", "ppv_l_mm_s": "velocity", "pvs_mm_s": "velocity"}
+             "ppv_v_mm_s": "velocity", "ppv_l_mm_s": "velocity", "pvs_mm_s": "velocity",
+             "airblast_pa": "pressure"}
 _NUMBER = {None: re.compile(r"^-?\d+([.,]\d+)?$"), ",": re.compile(r"^-?\d+(,\d+)?$"),
            ".": re.compile(r"^-?\d+(\.\d+)?$")}
 # Opt-in de quien lee formas de onda (read_waveform_csv): los registradores escriben 1e-05; read_events lo sigue rechazando.
@@ -180,8 +187,9 @@ def read_events(source, *, columns: dict[str, str], units: str | dict[str, str] 
     """Read the events table from a ``.csv``/``.xlsx`` path or a DataFrame into canonical SI columns.
 
     ``columns`` maps canonical names (``distance_m``, ``charge_kg`` and ``ppv_mm_s`` are required) to the column names of
-    the file. ``units`` is ``"metric"`` (m, kg, mm/s), ``"imperial"`` (ft, lb, in/s) or a dict with any of the keys
-    ``distance`` (``m``/``ft``), ``charge`` (``kg``/``lb``) and ``velocity`` (``mm/s``/``in/s``); missing keys are metric.
+    the file. ``units`` is ``"metric"`` (m, kg, mm/s), ``"imperial"`` (ft, lb, in/s, psi) or a dict with any of the keys
+    ``distance`` (``m``/``ft``), ``charge`` (``kg``/``lb``) and ``velocity`` (``mm/s``/``in/s``) and ``pressure`` (``Pa``/``kPa``/``psi``/``dB``, the last one a peak dB(L) level re 20
+    uPa, any finite number); missing keys are metric (``"imperial"`` implies ``pressure="psi"``).
     ``ppv_kind`` applies to the whole table; give it either as this argument or as a mapped ``ppv_kind`` column, not
     both. ``sep`` (CSV, detected from the header line when ``None``) and ``decimal`` (``","`` or ``"."``) override the
     detection; with ``decimal=None`` the mark follows the rules in the module docstring. Excel numbers stored as text are
@@ -257,12 +265,23 @@ def read_events(source, *, columns: dict[str, str], units: str | dict[str, str] 
                 if number is None or not np.isfinite(number):
                     raise cell_error(canonical, i, f"expected a number, received {cells[canonical][i]!r}. "
                                                 f"If the decimal mark is not what you expect, pass decimal=',' or '.'")
-                if canonical in _REQUIRED and number <= 0:
+                is_db = canonical == "airblast_pa" and unit_names["pressure"] == "dB"
+                if (canonical in _REQUIRED or (canonical == "airblast_pa" and not is_db)) and number <= 0:
                     raise cell_error(canonical, i, f"expected a positive value, received {cells[canonical][i]!r}")
+                if is_db:
+                    try:
+                        number = _core.db_to_pa(number)
+                    except ValueError:
+                        number = math.nan
+                    if not np.isfinite(number):
+                        raise cell_error(canonical, i, f"the level {cells[canonical][i]!r} dB is out of range "
+                                                       f"(its pressure in Pa is not finite)")
                 values.append(number)
             array = np.array(values, dtype=float)
             quantity = _QUANTITY.get(canonical)
-            out[canonical] = to_si(array, unit_names[quantity]) if quantity else array
+            if quantity and not (canonical == "airblast_pa" and unit_names["pressure"] == "dB"):
+                array = to_si(array, unit_names[quantity])
+            out[canonical] = array
     return pd.DataFrame(out, columns=[c for c in _ORDER if c in out])
 
 

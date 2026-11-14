@@ -209,7 +209,8 @@ def to_event_row(summary: RecordSummary, *, distance_m: float, charge_kg: float,
     """One row of the events table (keys in the canonical column order) from a record summary.
 
     ``ppv_mm_s`` is the largest geophone peak (``ppv_kind = "component_max"``) and ``frequency_hz`` its zero-crossing
-    frequency; ``date`` defaults to the record's start. Values that do not exist are NaN. A summary without geophones
+    frequency; ``airblast_pa`` and ``airblast_freq_hz`` are the microphone's peak pressure and zero-crossing frequency;
+    ``date`` defaults to the record's start. Values that do not exist are NaN. A summary without geophones
     is refused: the events table needs a PPV.
     """
     if not isinstance(summary, RecordSummary):
@@ -220,11 +221,14 @@ def to_event_row(summary: RecordSummary, *, distance_m: float, charge_kg: float,
     if not geo:
         raise _param_error("summary", "has no geophone channel: the events table needs a PPV")
     top = max(geo, key=lambda c: c.peak)  # max devuelve el primero de los empatados: T, V, L
+    mic = summary.channels.get("mic")
     if date is None:
         date = summary.start
     values = {"distance_m": distance_m, "charge_kg": charge_kg, "ppv_mm_s": top.peak, "ppv_kind": "component_max",
               "frequency_hz": top.zc_frequency_hz, "date": math.nan if date is None else date,
-              "point": math.nan if point is None else point, "pvs_mm_s": summary.pvs_mm_s}
+              "point": math.nan if point is None else point, "pvs_mm_s": summary.pvs_mm_s,
+              "airblast_pa": summary.mic_pspl_pa,
+              "airblast_freq_hz": mic.zc_frequency_hz if mic else math.nan}
     for g, s in _ROW_SUFFIX.items():
         c = summary.channels.get(g)
         values[f"ppv_{s}_mm_s"] = c.peak if c else math.nan

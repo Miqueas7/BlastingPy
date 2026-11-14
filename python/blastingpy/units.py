@@ -1,4 +1,4 @@
-"""Unit conversion to and from SI (m, kg, mm/s, mm) and scaled distance."""
+"""Unit conversion to and from SI (m, kg, mm/s, mm, Pa) and scaled distance."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ convert_k_to_si = _core.convert_k_to_si
 
 __all__ = ["to_si", "from_si", "scaled_distance", "convert_k_to_si"]
 
-# Factor que multiplica un valor en la unidad dada para pasarlo a SI (m, kg, mm/s, mm).
+# Factor que multiplica un valor en la unidad dada para pasarlo a SI (m, kg, mm/s, mm, Pa).
 _TO_SI = {
     "m": 1.0,
     "ft": _core.m_per_ft,
@@ -21,6 +21,9 @@ _TO_SI = {
     "in/s": _core.mm_per_in,
     "mm": 1.0,
     "in": _core.mm_per_in,
+    "Pa": 1.0,
+    "kPa": 1000.0,
+    "psi": _core.pa_per_psi,
 }
 
 
@@ -39,10 +42,10 @@ def _apply(result):
 
 
 def to_si(value, unit: str):
-    """Convert ``value`` (float or numpy array) from ``unit`` to SI (m, kg, mm/s, mm)."""
+    """Convert ``value`` (float or numpy array) from ``unit`` to SI (m, kg, mm/s, mm, Pa)."""
     return _apply(np.asarray(value, dtype=float) * _factor(unit))
 
 
 def from_si(value, unit: str):
-    """Convert ``value`` (float or numpy array) from SI (m, kg, mm/s, mm) to ``unit``."""
+    """Convert ``value`` (float or numpy array) from SI (m, kg, mm/s, mm, Pa) to ``unit``."""
     return _apply(np.asarray(value, dtype=float) / _factor(unit))

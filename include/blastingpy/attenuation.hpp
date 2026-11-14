@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -33,6 +34,10 @@ enum class Law { SquareRoot, CubeRoot, General };
 
 /// Nivel de la ley: Median usa k; Upper usa k_upper = k·10^(z·sigma).
 enum class Level { Median, Upper };
+
+/// Magnitud que ajusta fit_site_law: PPV (mm/s, sprint 1) o sobrepresión (Pa, sprint 3). Cambia el nombre en los
+/// errores, los avisos y la cita; la regresión es la misma.
+enum class Quantity { Ppv, Airblast };
 
 struct SiteLaw {
     Law law;
@@ -77,6 +82,14 @@ inline MethodInfo law_info(Law law) {
                     "Nicholls, Johnson & Duvall (1971), USBM Bulletin 656, eqs. 4.10\xE2\x80\x93"
                     "4.12 (p. 40); general form eq. 4.13 (p. 41)"};
     }
+}
+
+// Forma de RI 8485 para el aire (FUENTES_SPRINT3.md, «Distancia escalada y ley del sitio»): la Tabla B-1 y las
+// rectas en ejes log-log de las Figs. B-1 a B-5.
+inline MethodInfo airblast_law_info() {
+    return {"AIR-CBRT-USBM8485", Verification::Primary,
+            "Siskind, Stachura, Stagg & Kopp (1980), USBM RI 8485, Table B-1 (p. 84, PDF p. 90): "
+            "AB = K (D/W^(1/3))^-beta, fitted as straight lines on log-log axes (Figs. B-1 to B-5, pp. 78-83)"};
 }
 
 inline double coverage(double z) { return 0.5 * std::erfc(-z / std::sqrt(2.0)); }
@@ -192,23 +205,29 @@ inline double normal_quantile(double p) {
 
 /// Ajusta la ley del sitio por mínimos cuadrados en log10 (v en mm/s, D en m, W en kg por retardo).
 inline SiteLaw fit_site_law(const std::vector<double>& distance_m, const std::vector<double>& charge_kg,
-                            const std::vector<double>& ppv_mm_s, Law law, double z = 2.0, double outlier_z = 3.0) {
+                            const std::vector<double>& ppv_mm_s, Law law, double z = 2.0, double outlier_z = 3.0,
+                            Quantity quantity = Quantity::Ppv) {
     namespace v = validation;
+    const bool air = quantity == Quantity::Airblast;
+    const std::string y_name = air ? "airblast_pa" : "ppv_mm_s";
     const std::size_t n = ppv_mm_s.size();
-    v::require(distance_m.size() == n, "distance_m", "must have the same length as ppv_mm_s",
+    v::require(distance_m.size() == n, "distance_m", "must have the same length as " + y_name,
                static_cast<double>(distance_m.size()));
-    v::require(charge_kg.size() == n, "charge_kg", "must have the same length as ppv_mm_s",
+    v::require(charge_kg.size() == n, "charge_kg", "must have the same length as " + y_name,
                static_cast<double>(charge_kg.size()));
     for (std::size_t i = 0; i < n; ++i) {
         v::require_positive(distance_m[i], "distance_m");
         v::require_positive(charge_kg[i], "charge_kg");
-        v::require_positive(ppv_mm_s[i], "ppv_mm_s");
+        v::require_positive(ppv_mm_s[i], y_name);
     }
+    if (air)  // RI 8485 publica solo la raíz cúbica para el aire
+        v::require(law == Law::CubeRoot, "law", "must be Law.CubeRoot for airblast (USBM RI 8485, Table B-1)",
+                   static_cast<double>(law));
     v::require_non_negative(z, "z");
     v::require_positive(outlier_z, "outlier_z");
     const bool general = law == Law::General;
     const std::size_t params = general ? 3 : 2;
-    v::require(n >= params + 1, "ppv_mm_s",
+    v::require(n >= params + 1, y_name,
                "needs at least " + std::to_string(params + 1) + " events for this law (parameters + 1)",
                static_cast<double>(n));
 
@@ -271,13 +290,14 @@ inline SiteLaw fit_site_law(const std::vector<double>& distance_m, const std::ve
     if (f.sigma > 0.0)
         for (std::size_t i = 0; i < n; ++i)
             if (std::fabs(f.residuals[i]) > outlier_z * f.sigma) f.outliers.push_back(static_cast<int>(i));
-    f.info = attenuation_detail::law_info(law);
-    // Recomendación de BIVDEP (p. 4, punto 17), no requisito: por eso es aviso y no error.
-    if (n < 30) f.warnings.push_back("fewer than 30 events: OSMRE BIVDEP (2019) asks for a minimum of 30");
+    f.info = air ? attenuation_detail::airblast_law_info() : attenuation_detail::law_info(law);
+    // Recomendación de BIVDEP (p. 4, punto 17), no requisito: por eso es aviso y no error. Es de vibración: ninguna
+    // fuente del sprint 3 da un mínimo de eventos para el aire.
+    if (n < 30 && !air) f.warnings.push_back("fewer than 30 events: OSMRE BIVDEP (2019) asks for a minimum of 30");
     if (f.beta <= 0.0)
-        f.warnings.push_back(
-            "attenuation exponent beta is not positive (PPV does not decrease with distance): "
-            "this law must not be used for prediction");
+        f.warnings.push_back(std::string("attenuation exponent beta is not positive (") +
+                             (air ? "overpressure" : "PPV") +
+                             " does not decrease with distance): this law must not be used for prediction");
     // Con a ≤ 0 la inversa W = (v·D^β/K)^(1/a) divide entre cero o convierte el máximo en mínimo.
     if (general && f.charge_exponent <= 0.0)
         f.warnings.push_back(
@@ -287,9 +307,9 @@ inline SiteLaw fit_site_law(const std::vector<double>& distance_m, const std::ve
 }
 
 /// Ley dada por el usuario (sin ajuste). En General `charge_exponent` es obligatorio y > 0; en las otras se omite (NaN) o
-/// debe ser igual al exponente fijo de la ley.
+/// debe ser igual al exponente fijo de la ley. `info`, si se da, reemplaza la cita (p. ej. una ecuación publicada).
 inline SiteLaw make_site_law(Law law, double k, double beta, double charge_exponent = validation::unset,
-                             double sigma = 0.0, double z = 2.0) {
+                             double sigma = 0.0, double z = 2.0, std::optional<MethodInfo> info = std::nullopt) {
     namespace v = validation;
     v::require_positive(k, "k");
     v::require_positive(beta, "beta");
@@ -320,8 +340,12 @@ inline SiteLaw make_site_law(Law law, double k, double beta, double charge_expon
     f.k_upper = k * std::pow(10.0, z * sigma);
     f.convention = attenuation_detail::convention;
     f.distance_min_m = f.distance_max_m = f.charge_min_kg = f.charge_max_kg = v::unset;
-    f.info = attenuation_detail::law_info(law);
-    f.info.verification = Verification::UserDefined;
+    if (info) {
+        f.info = *info;
+    } else {
+        f.info = attenuation_detail::law_info(law);
+        f.info.verification = Verification::UserDefined;
+    }
     return f;
 }
 

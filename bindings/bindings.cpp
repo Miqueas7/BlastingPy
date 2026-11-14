@@ -4,9 +4,11 @@
  */
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include "blastingpy/airblast.hpp"
 #include "blastingpy/attenuation.hpp"
 #include "blastingpy/criteria_curve.hpp"
 #include "blastingpy/least_squares.hpp"
@@ -41,11 +43,19 @@ NB_MODULE(_blastingpy_core, m) {
     u.attr("m_per_ft") = units::m_per_ft;
     u.attr("kg_per_lb") = units::kg_per_lb;
     u.attr("mm_per_in") = units::mm_per_in;
+    u.attr("pa_per_psi") = units::pa_per_psi;
     u.def("scaled_distance", &units::scaled_distance, nb::arg("distance_m"), nb::arg("charge_kg"),
           nb::arg("charge_exponent"), "Scaled distance D / W**e (distance in m, charge in kg).");
     u.def("convert_k_to_si", &units::convert_k_to_si, nb::arg("k_imperial"), nb::arg("beta"),
           nb::arg("charge_exponent"),
           "Convert K of v[in/s] = K (D[ft]/W[lb]**e)**-beta to the K of v[mm/s] with D in m and W in kg.");
+
+    nb::module_ ab = m.def_submodule("_airblast", "Airblast: Pa <-> dB and psi-ft-lb coefficient conversion.");
+    ab.attr("reference_pressure_pa") = airblast::reference_pressure_pa;
+    ab.def("pa_to_db", &airblast::pa_to_db, nb::arg("pressure_pa"), "Level in dB re 20 uPa: 20 log10(p/p0).");
+    ab.def("db_to_pa", &airblast::db_to_pa, nb::arg("level_db"), "Pressure in Pa from a level in dB re 20 uPa.");
+    ab.def("convert_k_to_si", &airblast::convert_k_to_si, nb::arg("k_psi"), nb::arg("beta"),
+           "Convert K of AB[psi] = K (D[ft]/W[lb]**(1/3))**-beta to the K of AB[Pa] with D in m and W in kg.");
 
     nb::module_ ls = m.def_submodule("_least_squares", "Ordinary least squares with 0, 1 or 2 predictors.");
     nb::class_<OlsResult>(ls, "OlsResult", "Coefficients (intercept first), SSE, sigma, dof, R2 and residuals of a fit.")
@@ -88,17 +98,23 @@ NB_MODULE(_blastingpy_core, m) {
         .def_ro("warnings", &SiteLaw::warnings);
     at.def("normal_quantile", &normal_quantile, nb::arg("p"),
            "Standard normal quantile, 0 < p < 1 (normal_quantile(0.95) = 1.645).");
+    nb::enum_<Quantity>(at, "Quantity", "Quantity a site law is fitted on (names, warnings and citation).")
+        .value("Ppv", Quantity::Ppv, "peak particle velocity, mm/s")
+        .value("Airblast", Quantity::Airblast, "peak overpressure, Pa (cube-root law of USBM RI 8485)");
     at.def("fit_site_law", &fit_site_law, nb::arg("distance_m"), nb::arg("charge_kg"), nb::arg("ppv_mm_s"),
-           nb::arg("law"), nb::arg("z") = 2.0, nb::arg("outlier_z") = 3.0,
+           nb::arg("law"), nb::arg("z") = 2.0, nb::arg("outlier_z") = 3.0, nb::arg("quantity") = Quantity::Ppv,
            "Fit the site law by least squares in log10; the upper bound is k * 10**(z * sigma).");
     at.def("make_site_law", &make_site_law, nb::arg("law"), nb::arg("k"), nb::arg("beta"),
            nb::arg("charge_exponent") = validation::unset, nb::arg("sigma") = 0.0, nb::arg("z") = 2.0,
-           "User-defined site law (no fit); charge_exponent is required for Law.General.");
+           nb::arg("info") = nb::none(),
+           "User-defined site law (no fit); charge_exponent is required for Law.General. `info` replaces the "
+           "citation (default: the law's own, marked user-defined).");
 
     nb::enum_<Level>(at, "Level", "Which constant of the law a prediction uses.")
         .value("Median", Level::Median, "k: the median of the fit")
         .value("Upper", Level::Upper, "k_upper = k * 10**(z * sigma)");
     nb::class_<Prediction>(at, "Prediction", "A value and its warnings (extrapolation; upper bound with no margin).")
+        .def(nb::init<double, std::vector<std::string>>(), nb::arg("value"), nb::arg("warnings"))
         .def_ro("value", &Prediction::value)
         .def_ro("warnings", &Prediction::warnings);
     at.def("predict_ppv", &predict_ppv, nb::arg("law"), nb::arg("distance_m"), nb::arg("charge_kg"),

@@ -9,6 +9,7 @@ from . import datasets  # noqa: F401
 from . import plotting  # noqa: F401
 from . import io  # noqa: F401
 from . import waveform  # noqa: F401
+from . import airblast  # noqa: F401
 from .events import read_events, write_events_template  # noqa: F401
 
 __version__ = "0.1.0"
