@@ -17,6 +17,7 @@ import dataclasses
 import functools
 import importlib.resources
 import json
+import math
 import warnings
 
 import numpy as np
@@ -33,7 +34,8 @@ Level = _core.Level
 Prediction = _core.Prediction
 
 __all__ = ["to_db", "from_db", "fit", "predict", "max_charge", "distance_for", "PublishedEquation",
-           "list_equations", "published", "predict_published", "SiteLaw", "Law", "Level", "Prediction"]
+           "list_equations", "published", "predict_published", "SiteLaw", "Law", "Level", "Prediction",
+           "SYSTEMS", "Limit", "list_standards", "system_from_cutoff", "limit_db", "evaluate", "evaluate_prediction"]
 
 _COLUMNS = ("distance_m", "charge_kg", "airblast_pa")
 _FT_LB = "psi; ft/lb^(1/3)"
@@ -186,3 +188,137 @@ def predict_published(equation_id: str, distance_m: float, charge_kg: float) -> 
             out.append(f"scaled distance {sd:.4g} m/kg^(1/3) is outside the equation's range [{lo:.4g}, {hi:.4g}] "
                        f"m/kg^(1/3) (approximate, read from a figure): extrapolation")
     return Prediction(p.value, out + list(eq.notes))
+
+
+# --- Limits and verdict -------------------------------------------------------------------------------------------
+
+SYSTEMS = ("0.1Hz", "2Hz", "6Hz", "c-slow")
+_LINEAR = SYSTEMS[:3]
+
+
+@dataclasses.dataclass(frozen=True)
+class Limit:
+    """An airblast limit for one measuring system: a linear peak level in dB re 20 uPa (or C-slow)."""
+
+    standard: str  # "USBM-RI8485-1980" | "OSMRE-30CFR816.67"
+    system: str
+    level_db: float
+    pressure_pa: float | None  # None en "c-slow": no es un pico lineal
+    wording: str  # cómo nombra la fuente al sistema
+    notes: tuple[str, ...]
+    citation: str
+    verification: str
+
+
+def _error(name: str, detail: str) -> ValueError:
+    return ValueError(f"Domain error [BlastingPy]: parameter '{name}' {detail}")
+
+
+@functools.cache
+def _limits() -> dict:
+    text = importlib.resources.files("blastingpy").joinpath("airblast_data", "limits.json").read_text("utf-8")
+    out = {}
+    for r in json.loads(text)["limits"]:
+        linear = r["system"] in _LINEAR
+        out[r["standard"], r["system"]] = Limit(
+            r["standard"], r["system"], float(r["level_db"]), float(from_db(r["level_db"])) if linear else None,
+            r["wording"], tuple(r["notes"]), r["citation"], r["verification"])
+    return out
+
+
+def list_standards() -> list[str]:
+    """Ids of the standards with airblast limits, in file order."""
+    return list(dict.fromkeys(std for std, _ in _limits()))
+
+
+def _system(system) -> str:
+    if system == "5Hz":  # RI 8485: "5- or 6-Hz"; CFR: "6 Hz or lower"
+        return "6Hz"
+    if not isinstance(system, str) or system not in SYSTEMS:
+        raise _error("system", f"is required (the measuring system of the microphone) and must be one of "
+                               f"{list(SYSTEMS)}. Received: {system!r}")
+    return system
+
+
+def system_from_cutoff(low_cutoff_hz: float) -> str:
+    """Measuring system of a linear microphone from its lower -3 dB cutoff: <= 0.1 Hz, <= 2 Hz or <= 6 Hz.
+
+    A cutoff above 6 Hz has no limit (inferred from "or lower" in the sources) and is an error.
+    """
+    f = low_cutoff_hz
+    if not (isinstance(f, (int, float, np.number)) and math.isfinite(f) and f > 0):
+        raise _error("low_cutoff_hz", f"must be finite and > 0. Received: {f!r}")
+    if f > 6:
+        raise _error("low_cutoff_hz", f"is above 6 Hz: no airblast limit applies to a linear system that cuts "
+                                      f"off there. Received: {f!r}")
+    return "0.1Hz" if f <= 0.1 else "2Hz" if f <= 2 else "6Hz"
+
+
+def limit_db(standard: str, *, system: str) -> Limit:
+    """Limit of ``standard`` (see :func:`list_standards`) for the measuring ``system`` (one of :data:`SYSTEMS`).
+
+    ``system`` is required: a level in dB means nothing without it. ``"5Hz"`` is read as ``"6Hz"``.
+    """
+    system = _system(system)
+    try:
+        return _limits()[standard, system]
+    except (KeyError, TypeError):
+        raise _error("standard", f"must be one of {list_standards()}. Received: {standard!r}") from None
+
+
+def evaluate(events: pd.DataFrame, standard: str, *, system: str) -> pd.DataFrame:
+    """Verdict of each event's ``airblast_pa`` against ``standard`` for the measuring ``system``.
+
+    Returns a copy of ``events`` plus ``airblast_db``, ``limit_db``, ``margin_db`` (limit - measured), ``status``
+    (``complies``, ``exceeds``, ``indeterminate`` or ``not_comparable``) and ``reason``. A missing, non-finite or
+    <= 0 pressure is ``indeterminate``; with ``system="c-slow"`` every row is ``not_comparable`` (a linear peak is
+    not a C-slow level). ``attrs`` names the standard, system, limit, citation, verification and notes.
+    """
+    lim = limit_db(standard, system=system)
+    if "airblast_pa" not in events.columns:
+        raise _error("events", "is missing the column 'airblast_pa'")
+    out = events.copy()
+    p = out["airblast_pa"].to_numpy(dtype=float)
+    ok = np.isfinite(p) & (p > 0)
+    db = np.full(p.shape, np.nan)
+    db[ok] = to_db(p[ok])
+    out["airblast_db"] = db
+    out["limit_db"] = lim.level_db
+    out["margin_db"] = lim.level_db - db
+    status = np.where(db > lim.level_db + 1e-9, "exceeds", "complies").astype(object)
+    reason = np.full(p.shape, "", dtype=object)
+    status[~ok] = "indeterminate"
+    reason[~ok] = "airblast_pa is missing, not finite or <= 0"
+    if lim.pressure_pa is None:
+        status[:] = "not_comparable"
+        reason[:] = "a linear peak pressure is not a C-slow level: it cannot be compared with this limit"
+        out["margin_db"] = np.nan
+    out["status"], out["reason"] = status, reason
+    out.attrs = {"standard": lim.standard, "system": lim.system, "limit_db": lim.level_db, "citation": lim.citation,
+                 "verification": lim.verification, "notes": lim.notes}
+    return out
+
+
+def evaluate_prediction(equation_id: str, distance_m: float, charge_kg: float, standard: str, *, system: str) -> dict:
+    """Median level of a published equation at ``distance_m`` / ``charge_kg`` against the limit of ``system``.
+
+    Returns ``level_db``, ``limit_db``, ``margin_db``, ``status``, ``equation_system``, ``limit_system`` and
+    ``warnings`` (the prediction's, the limit's notes, and one when the equation's measuring system differs from the
+    limit's or is not stated). With ``system="c-slow"`` the status is ``not_comparable`` and the margin None.
+    """
+    lim = limit_db(standard, system=system)
+    pred = predict_published(equation_id, distance_m, charge_kg)
+    eq_sys = published(equation_id).system
+    eq_sys = "6Hz" if eq_sys == "5Hz" else eq_sys
+    level = float(to_db(pred.value))
+    warns = list(pred.warnings) + list(lim.notes)
+    if eq_sys != lim.system:
+        warns.append(f"the equation's measuring system ({eq_sys or 'not stated by the source'}) differs from the "
+                     f"limit's ({lim.system}): the comparison mixes measuring systems")
+    if lim.pressure_pa is None:
+        status, margin = "not_comparable", None
+    else:
+        margin = lim.level_db - level
+        status = "exceeds" if level > lim.level_db + 1e-9 else "complies"
+    return {"level_db": level, "limit_db": lim.level_db, "margin_db": margin, "status": status,
+            "equation_system": eq_sys, "limit_system": lim.system, "warnings": warns}
