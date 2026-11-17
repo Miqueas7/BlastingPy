@@ -11,10 +11,9 @@ authors:
   - family-names: "Quintanilla Ventura"
     given-names: "Miqueas"
     email: "miqueasq@gmail.com"
-version: "0.1.0"
-date-released: "2026-11-14"
+version: "0.1.1"
+date-released: "2026-11-16"
 license: MIT
-repository-code: "https://github.com/Miqueas7/BlastingPy"
 url: "https://miqueas.dev/blastingpy"
 keywords:
   - mining

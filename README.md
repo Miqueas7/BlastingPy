@@ -10,7 +10,7 @@ checks the result against a regulatory criterion, stating the edition, table, ma
 **Documentation: <https://miqueas.dev/blastingpy>** (guide, methods, worked examples and API reference, in English
 and Spanish).
 
-**Status:** version 0.1.0, first release. Its five blocks: events table, attenuation law, maximum charge and compliance
+**Status:** version 0.1.1 (0.1.0 was the first release; 0.1.1 only fixes the package metadata). Its five blocks: events table, attenuation law, maximum charge and compliance
 verdict; reading seismograph records (waveform, PPV, vector sum, frequency); airblast; flyrock (published range models,
 per-hole comparison and clearance distance); and near-field vibration (Holmberg-Persson, Heelan, whole-blast simulation
 and its Monte Carlo).
@@ -22,11 +22,10 @@ python -m pip install "blastingpy[io,viz]"
 ```
 
 Wheels are published for Python 3.10 to 3.14 on Linux, Windows and macOS. Extras: `io` (read and write `.xlsx`), `viz`
-(charts), `seismic` (ObsPy readers). To build from the repository (needs a C++ compiler and CMake):
+(charts), `seismic` (ObsPy readers). To build from the source distribution on PyPI (needs a C++ compiler and CMake):
 
 ```bash
-python -m pip install ".[test,io,viz]"
-python -m pytest tests/python -q
+python -m pip install --no-binary blastingpy "blastingpy[io,viz]"
 ```
 
 ## Example
@@ -48,13 +47,13 @@ plotting.plot_compliance(events, "USBM-RI8507-1980", "appendix-b-drywall")
 ```
 
 `write_events_template("events.csv")` writes the blank table. A complete, runnable version with synthetic data is in
-[examples/01-site-law-and-compliance](https://github.com/Miqueas7/BlastingPy/tree/main/examples/01-site-law-and-compliance/).
+[the worked case 01](https://miqueas.dev/blastingpy/en/casos/01-ley-del-sitio/).
 
 ## From a seismograph record
 
 `blastingpy.io` reads the waveform a seismograph exports; `blastingpy.waveform` turns it into peaks, vector sum and
 frequency, and into a row of the events table of the sections above. The facts and their evidence are in
-[docs/investigacion/FUENTES_SPRINT2.md](https://github.com/Miqueas7/BlastingPy/blob/main/docs/investigacion/FUENTES_SPRINT2.md).
+[the waveform method page](https://miqueas.dev/blastingpy/en/metodos/forma-de-onda/).
 
 ```python
 from blastingpy import attenuation, criteria, io, waveform
@@ -65,7 +64,7 @@ law = attenuation.fit(events, law="sqrt")
 verdict = criteria.evaluate(events, "USBM-RI8507-1980", "appendix-b-drywall")
 ```
 
-A complete, runnable version with synthetic data is in [examples/02-waveform-to-events](https://github.com/Miqueas7/BlastingPy/tree/main/examples/02-waveform-to-events/).
+A complete, runnable version with synthetic data is in [the worked case 02](https://miqueas.dev/blastingpy/en/casos/02-registros-a-eventos/).
 
 | Reader | `format_evidence` | Notes |
 |---|---|---|
@@ -107,7 +106,7 @@ seismograph's own software shows.
 
 `blastingpy.airblast` fits the site law to the peak overpressure, checks it against the airblast limits and carries the
 published equations. The facts, pages and marks are in
-[docs/investigacion/FUENTES_SPRINT3.md](https://github.com/Miqueas7/BlastingPy/blob/main/docs/investigacion/FUENTES_SPRINT3.md).
+[the airblast method page](https://miqueas.dev/blastingpy/en/metodos/airblast/).
 
 ```python
 from blastingpy import airblast, waveform
@@ -119,7 +118,7 @@ charge = airblast.max_charge(law, 400.0, limit.pressure_pa)
 verdict = airblast.evaluate(events, "OSMRE-30CFR816.67", system="2Hz")
 ```
 
-A complete, runnable version with synthetic data is in [examples/03-airblast](https://github.com/Miqueas7/BlastingPy/tree/main/examples/03-airblast/).
+A complete, runnable version with synthetic data is in [the worked case 03](https://miqueas.dev/blastingpy/en/casos/03-airblast/).
 
 - **Units.** Inside everything is Pa. `airblast.to_db` / `from_db` convert with P0 = 20 uPa; `read_events(...,
   units={"pressure": "Pa" | "kPa" | "psi" | "dB"})` and `units.to_si` accept Pa, kPa and psi. Events carry
@@ -165,7 +164,7 @@ Not included: wind correction, the Australian comfort limits and AS 2187.2 from 
 
 `blastingpy.flyrock` carries the published rock-projection models, a per-hole comparison table and the clearance
 distance. The facts, pages and marks are in
-[docs/investigacion/FUENTES_SPRINT4.md](https://github.com/Miqueas7/BlastingPy/blob/main/docs/investigacion/FUENTES_SPRINT4.md).
+[the flyrock method page](https://miqueas.dev/blastingpy/en/metodos/flyrock/).
 
 ```python
 import pandas as pd
@@ -179,7 +178,7 @@ clear = flyrock.clearance(worst, target="people", regulation="PE-DS024-2016-EM")
 print(clear.distance_m, clear.governs)
 ```
 
-A complete, runnable version with a synthetic hole table is in [examples/04-flyrock](https://github.com/Miqueas7/BlastingPy/tree/main/examples/04-flyrock/).
+A complete, runnable version with a synthetic hole table is in [the worked case 04](https://miqueas.dev/blastingpy/en/casos/04-flyrock/).
 
 - **No model carries a safety margin; `clearance` adds it:** factor 2 for equipment and 4 for people (Richards & Moore), or your own factor >= 1.
 - **Peruvian minimum:** DS 024-2016-EM art. 267 a), as amended by DS 034-2023-EM: a 500 m radius when rock can be projected through 360 degrees, and in bench blasts at least 500 m in the direction the blast throws. It applies to the evacuation of workers (people, not equipment); the result says which of the model and the regulation governs (`governs`). Reporting the larger of the factored range and 500 m is a design decision, not the text of the regulation.
@@ -210,7 +209,7 @@ A complete, runnable version with a synthetic hole table is in [examples/04-flyr
 
 `blastingpy.nearfield` estimates the vibration close to a charge (Holmberg-Persson, Heelan) and simulates a whole blast
 by superposing a seed waveform, with a Monte Carlo over the delays and the amplitudes. The facts, pages and marks are in
-[docs/investigacion/FUENTES_SPRINT5.md](https://github.com/Miqueas7/BlastingPy/blob/main/docs/investigacion/FUENTES_SPRINT5.md).
+[the near-field method page](https://miqueas.dev/blastingpy/en/metodos/campo-cercano/).
 
 ```python
 import pandas as pd
@@ -240,7 +239,7 @@ mc = nearfield.monte_carlo_blast(holes, (5.0, 120.0), seed, delay_sigma_s=0.002,
 print(mc.percentile(95), mc.probability_exceeding(25.0))
 ```
 
-A complete, runnable version with synthetic data is in [examples/05-nearfield](https://github.com/Miqueas7/BlastingPy/tree/main/examples/05-nearfield/).
+A complete, runnable version with synthetic data is in [the worked case 05](https://miqueas.dev/blastingpy/en/casos/05-campo-cercano/).
 
 | Model | Estimates | Inputs | Mark | Source read |
 |---|---|---|---|---|
@@ -365,18 +364,18 @@ vibration: the laws Langefors-Kihlstrom, Ghosh-Daemen and CMRI, and the standard
 SS 4604866, SN 640312a and NBR 9653 are not included because no source with their formulas or values has been read.
 DIN 4150-3 line 1 and the upper-floor criteria, the OSMRE Figure 1 curve and BS 7385-2 line 1 below 4 Hz are also out.
 Three seismograph formats (THOR, Blastware with header, histogram) are not validated against a real file. Details in
-[docs/CHANGELOG.md](https://github.com/Miqueas7/BlastingPy/blob/main/docs/CHANGELOG.md).
+[the 0.1.0 status page](https://miqueas.dev/blastingpy/en/fundamento/estado/).
 
 ## How to cite
 
-If BlastingPy helps your work, please cite it. GitHub shows a "Cite this repository" button built from
-[CITATION.cff](https://github.com/Miqueas7/BlastingPy/blob/main/CITATION.cff):
+If BlastingPy helps your work, please cite it (the metadata is in `CITATION.cff`, in the
+source distribution):
 
 > Quintanilla Ventura, M. (2026). *BlastingPy: blast vibration, airblast, flyrock and near-field analysis for mining*
-> (version 0.1.0) [Computer software]. https://github.com/Miqueas7/BlastingPy
+> (version 0.1.1) [Computer software]. https://miqueas.dev/blastingpy
 
 Each result also records the method and source it follows (`MethodInfo`); cite that original source as well.
 
 ## License
 
-MIT. See [LICENSE](https://github.com/Miqueas7/BlastingPy/blob/main/LICENSE).
+MIT (the `LICENSE` file travels in the package).
