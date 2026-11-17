@@ -8,7 +8,6 @@ run through Tesseract (English); the OCR text is appended after the native text.
 """
 
 
-
 import argparse
 import subprocess
 import sys
