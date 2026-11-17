@@ -369,7 +369,7 @@ deja fuera, y por qué, al final de su sección ([Airblast](#airblast), [Flyrock
 normas UNE 22381, AS 2187.2, BS 6472-2, SS 4604866, SN 640312a y NBR 9653 no entran porque no se leyó ninguna fuente con
 sus fórmulas o valores. Tampoco la línea 1 de DIN 4150-3 ni los criterios del último piso, la curva de la Figura 1 de
 OSMRE ni la línea 1 de BS 7385-2 bajo 4 Hz. Tres formatos de sismógrafo (THOR, Blastware con encabezado e histograma) no
-están validados contra un archivo real. Detalle en [la página de estado de la 0.1.0](https://miqueas.dev/blastingpy/fundamento/estado/).
+están validados contra un archivo real. Detalle en [la página de estado](https://miqueas.dev/blastingpy/fundamento/estado/).
 
 ## Cómo citar
 

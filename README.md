@@ -364,7 +364,7 @@ vibration: the laws Langefors-Kihlstrom, Ghosh-Daemen and CMRI, and the standard
 SS 4604866, SN 640312a and NBR 9653 are not included because no source with their formulas or values has been read.
 DIN 4150-3 line 1 and the upper-floor criteria, the OSMRE Figure 1 curve and BS 7385-2 line 1 below 4 Hz are also out.
 Three seismograph formats (THOR, Blastware with header, histogram) are not validated against a real file. Details in
-[the 0.1.0 status page](https://miqueas.dev/blastingpy/en/fundamento/estado/).
+[the status page](https://miqueas.dev/blastingpy/en/fundamento/estado/).
 
 ## How to cite
 
