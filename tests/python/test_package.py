@@ -22,7 +22,7 @@ def test_version_is_the_same_everywhere():
 
 
 MODULES = ("units", "events", "attenuation", "criteria", "datasets", "plotting", "io", "waveform", "airblast",
-           "flyrock", "nearfield")
+           "flyrock", "nearfield", "pattern")
 
 
 def test_every_module_lists_its_public_names():
