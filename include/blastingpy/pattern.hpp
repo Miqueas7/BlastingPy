@@ -41,7 +41,11 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "blastingpy/method_info.hpp"
 #include "blastingpy/units.hpp"
@@ -131,6 +135,148 @@ inline BlastDesign lopez_jimeno(double diameter_mm, double ucs_mpa) {
             {"LopezJimeno2003", Verification::Secondary,
              "Lopez Jimeno et al. (2003) table by UCS, as adapted in U. Cantabria OCW, Tema 3.1 (Perez Alvarez), p. 18"},
             note};
+}
+
+/*
+ * Malla de banco: layout(). Ninguna fuente da un algoritmo; son decisiones de diseño (diseño de la malla de banco,
+ * §4.2, 19-nov-2026), no fórmulas:
+ * - Filas paralelas a la recta primer-último punto de la cresta, a (r+1)·B hacia el lado del centroide del contorno.
+ * - Una sola grilla: O + k·S·u, más S/2 en las filas impares en tresbolillo. O es el extremo de la cresta desde el
+ *   que apunta u, y u se orienta para que el interior quede a la izquierda: la cresta al revés da la misma malla.
+ * - Dentro estricto: un collar sobre el contorno queda fuera. Las filas siguen mientras alguna posición caiga dentro.
+ * - En cada extremo de cada tramo de la fila, si el hueco hasta el contorno pasa de S/2, va un taladro de borde en
+ *   el punto medio. Un tramo sin taladros de la grilla no lleva ninguno.
+ * - front_off_ids: taladros de la fila 0 cuya distancia a la cresta real difiere de B en más de front_tolerance·B.
+ * Todo se calcula en un marco local (t a lo largo de u, v sobre n, origen O) para no perder precisión con UTM.
+ */
+struct Point { double x, y; };
+enum class Arrangement { Square, Rectangular, Staggered };
+struct Hole { int id; int row; double x, y, along_m; bool edge; };
+struct Layout { std::vector<Hole> holes; std::vector<int> front_off_ids; double rear_gap_m; };
+
+namespace detail {
+inline double segment_distance(double px, double py, double ax, double ay, double bx, double by) {
+    const double dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+    const double s = len2 > 0 ? std::clamp(((px - ax) * dx + (py - ay) * dy) / len2, 0.0, 1.0) : 0.0;
+    return std::hypot(px - ax - s * dx, py - ay - s * dy);
+}
+}  // namespace detail
+
+inline Layout layout(const std::vector<Point>& outline, const std::vector<Point>& crest, double burden_m,
+                     double spacing_m, Arrangement arrangement, double front_tolerance = 0.20) {
+    validation::require_positive(burden_m, "burden_m");
+    validation::require_positive(spacing_m, "spacing_m");
+    validation::require_non_negative(front_tolerance, "front_tolerance");
+    if (arrangement == Arrangement::Square)
+        validation::require(spacing_m == burden_m, "spacing_m",
+                            "must equal burden_m for a square pattern (use rectangular otherwise)", spacing_m);
+    for (const auto& p : outline) {
+        validation::require_finite(p.x, "outline x");
+        validation::require_finite(p.y, "outline y");
+    }
+    for (const auto& p : crest) {
+        validation::require_finite(p.x, "crest x");
+        validation::require_finite(p.y, "crest y");
+    }
+    validation::require(crest.size() >= 2, "crest", "must have at least 2 points", double(crest.size()));
+
+    std::vector<Point> poly = outline;
+    if (poly.size() > 1 && poly.front().x == poly.back().x && poly.front().y == poly.back().y) poly.pop_back();
+    validation::require(poly.size() >= 3, "outline", "must have at least 3 vertices", double(poly.size()));
+
+    Point o = crest.front();
+    const double len = std::hypot(crest.back().x - o.x, crest.back().y - o.y);
+    validation::require(len > 0, "crest", "first and last points must differ (length of the crest line)", len);
+    double ux = (crest.back().x - o.x) / len, uy = (crest.back().y - o.y) / len;
+
+    // Centroide por la fórmula del área (shoelace), relativo a o: vale para los dos sentidos de giro.
+    double a2 = 0, cx = 0, cy = 0;
+    for (std::size_t i = 0; i < poly.size(); ++i) {
+        const auto& p = poly[i];
+        const auto& q = poly[(i + 1) % poly.size()];
+        const double px = p.x - o.x, py = p.y - o.y, qx = q.x - o.x, qy = q.y - o.y;
+        const double c = px * qy - qx * py;
+        a2 += c;
+        cx += (px + qx) * c;
+        cy += (py + qy) * c;
+    }
+    validation::require(a2 != 0, "outline", "must enclose a non-zero area (area in m2)", a2 / 2);
+    if ((-uy * cx + ux * cy) / a2 < 0) {  // v del centroide (·3) del lado −n: se invierten u y n
+        ux = -ux;
+        uy = -uy;
+        o = crest.back();
+    }
+    const double nx = -uy, ny = ux;
+
+    // Contorno en el marco local (t, v).
+    std::vector<Point> tv;
+    double depth = -INFINITY;
+    for (const auto& p : poly) {
+        const double dx = p.x - o.x, dy = p.y - o.y;
+        tv.push_back({dx * ux + dy * uy, dx * nx + dy * ny});
+        depth = std::max(depth, tv.back().y);
+    }
+    const auto on_boundary = [&](double t, double v) {
+        for (std::size_t i = 0; i < tv.size(); ++i) {
+            const auto& a = tv[i];
+            const auto& b = tv[(i + 1) % tv.size()];
+            if (detail::segment_distance(t, v, a.x, a.y, b.x, b.y) <= 1e-9) return true;
+        }
+        return false;
+    };
+
+    Layout out{{}, {}, 0.0};
+    const double s = spacing_m;
+    double last_v = 0;
+    for (int r = 0;; ++r) {
+        const double v = (r + 1) * burden_m;
+        if (v >= depth) break;  // más allá del vértice más lejano no hay interior
+        std::vector<double> cuts;
+        for (std::size_t i = 0; i < tv.size(); ++i) {
+            const auto& a = tv[i];
+            const auto& b = tv[(i + 1) % tv.size()];
+            if ((a.y > v) != (b.y > v)) cuts.push_back(a.x + (v - a.y) * (b.x - a.x) / (b.y - a.y));
+        }
+        std::sort(cuts.begin(), cuts.end());
+        const double offset = arrangement == Arrangement::Staggered && r % 2 == 1 ? s / 2 : 0.0;
+        const auto add = [&](double t, bool edge) {
+            out.holes.push_back({0, r, o.x + t * ux + v * nx, o.y + t * uy + v * ny, t, edge});
+        };
+        bool any = false;
+        for (std::size_t i = 0; i + 1 < cuts.size(); i += 2) {
+            const double lo = cuts[i], hi = cuts[i + 1];
+            std::vector<double> ts;
+            for (auto k = static_cast<long long>(std::ceil((lo - offset) / s)); offset + k * s < hi; ++k) {
+                const double t = offset + k * s;
+                if (t > lo && !on_boundary(t, v)) ts.push_back(t);
+            }
+            if (ts.empty()) continue;
+            any = true;
+            if (ts.front() - lo > s / 2) add((lo + ts.front()) / 2, true);
+            for (double t : ts) add(t, false);
+            if (hi - ts.back() > s / 2) add((ts.back() + hi) / 2, true);
+        }
+        if (!any) break;
+        last_v = v;
+    }
+    if (out.holes.empty())
+        throw std::invalid_argument("no hole fits: burden_m = " + validation::detail::num(burden_m) +
+                                    " but the outline reaches only " + validation::detail::num(depth) +
+                                    " m from the crest line on the inward side");
+
+    for (std::size_t i = 0; i < out.holes.size(); ++i) {
+        auto& h = out.holes[i];
+        h.id = static_cast<int>(i) + 1;
+        if (h.row != 0) continue;
+        const double hx = h.along_m * ux + burden_m * nx, hy = h.along_m * uy + burden_m * ny;
+        double d = INFINITY;
+        for (std::size_t j = 0; j + 1 < crest.size(); ++j)
+            d = std::min(d, detail::segment_distance(hx, hy, crest[j].x - o.x, crest[j].y - o.y,
+                                                     crest[j + 1].x - o.x, crest[j + 1].y - o.y));
+        if (std::fabs(d - burden_m) > front_tolerance * burden_m) out.front_off_ids.push_back(h.id);
+    }
+    out.rear_gap_m = depth - last_v;
+    return out;
 }
 
 }  // namespace blastingpy::pattern
