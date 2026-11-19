@@ -96,7 +96,45 @@ TEST(PatternAsh, InfoIsSecondary) {
     EXPECT_NE(d.info.source.find("IC 8550"), std::string::npos) << d.info.source;
 }
 
+// Tabla de UC p. 18 (López Jimeno, con D en metros): con D = 0,1 m cada clase da su fila.
+TEST(PatternLopezJimeno, TableRows) {
+    struct Row { double ucs, v, e, t, sp; };
+    const Row rows[] = {{50, 3.9, 5.1, 3.5, 1.0}, {100, 3.7, 4.7, 3.4, 1.1},
+                        {150, 3.5, 4.3, 3.2, 1.2}, {200, 3.3, 3.8, 3.0, 1.2}};
+    for (const auto& r : rows) {
+        const auto d = pt::lopez_jimeno(100, r.ucs);
+        expect_rel(d.burden_m, r.v, 1e-12);
+        expect_rel(d.spacing_m, r.e, 1e-12);
+        expect_rel(d.stemming_m, r.t, 1e-12);
+        expect_rel(d.subdrill_m, r.sp, 1e-12);
+    }
+}
+
+// Bordes de clase (decisión del plan): 70 entra en Media, 120 en Dura y 180 en Muy dura.
+TEST(PatternLopezJimeno, ClassBoundaries) {
+    expect_rel(pt::lopez_jimeno(100, 70).burden_m, 37 * 0.1, 1e-12);
+    expect_rel(pt::lopez_jimeno(100, 120).burden_m, 35 * 0.1, 1e-12);
+    expect_rel(pt::lopez_jimeno(100, 180).burden_m, 33 * 0.1, 1e-12);
+    EXPECT_NE(pt::lopez_jimeno(100, 70).note.find("boundary"), std::string::npos);
+}
+
+TEST(PatternLopezJimeno, OutsideDiameterRangeNotes) {
+    const auto d = pt::lopez_jimeno(250, 100);
+    expect_rel(d.burden_m, 37 * 0.25, 1e-12);
+    EXPECT_NE(d.note.find("65-165"), std::string::npos) << d.note;
+    EXPECT_EQ(pt::lopez_jimeno(100, 100).note.find("65-165"), std::string::npos);
+}
+
+TEST(PatternLopezJimeno, InfoIsSecondary) {
+    const auto d = pt::lopez_jimeno(100, 100);
+    EXPECT_EQ(d.info.verification, Verification::Secondary);
+    EXPECT_NE(d.info.source.find("p. 18"), std::string::npos) << d.info.source;
+}
+
 TEST(PatternBurden, RejectsNonPositiveOrNan) {
+    EXPECT_THROW(pt::lopez_jimeno(0, 100), std::invalid_argument);
+    EXPECT_THROW(pt::lopez_jimeno(100, -5), std::invalid_argument);
+    EXPECT_THROW(pt::lopez_jimeno(100, std::numeric_limits<double>::infinity()), std::invalid_argument);
     const double nan = std::numeric_limits<double>::quiet_NaN();
     EXPECT_THROW(pt::konya(0, 10, 2600, 1300, pt::Initiation::Delayed), std::invalid_argument);
     EXPECT_THROW(pt::konya(100, 10, nan, 1300, pt::Initiation::Delayed), std::invalid_argument);

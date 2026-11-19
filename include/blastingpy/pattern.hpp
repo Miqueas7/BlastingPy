@@ -1,6 +1,7 @@
 /**
  * @file pattern.hpp
- * @brief Malla de banco: burden, espaciamiento, taco y sobreperforación por Konya (FHWA) y Ash (IC 8550).
+ * @brief Malla de banco: burden, espaciamiento, taco y sobreperforación por Konya (FHWA), Ash (IC 8550) y López
+ *        Jimeno (UC).
  *
  * Konya y Walter (1991), FHWA-HI-92-001 [Primary]. Páginas del PDF (la impresa entre paréntesis):
  * - Burden B = (2·SGe/SGr + 1,5)·De, B en pies y De en pulgadas: ec. 6.2, p. 110 (91); ejemplo 6.2 (6,25 ft), p. 111.
@@ -23,6 +24,16 @@
  *   spacing_m = s; taco y sobreperforación siguen sobre el burden verdadero B (pp. 15-16).
  * - J = K_J·B con K_J = 0,3 (preferido, p. 15; promedio de la Tabla 1, p. 16).
  * - T = K_T·B con K_T = 0,7 (p. 16; promedio de la Tabla 1, p. 16). No está en pp. 14-15.
+ *
+ * López Jimeno, por U. Cantabria OCW, Tema 3.1, p. 18 [Secondary: tabla adaptada de López Jimeno et al. (2003)]:
+ * - Por clase de UCS, con D en metros: V = 39/37/35/33·D, E = 51/47/43/38·D, T = 35/34/32/30·D, Sp = 10/11/12/12·D
+ *   (blanda < 70, media 70-120, dura 120-180, muy dura > 180 MPa).
+ * - La UC no resuelve los bordes: 70, 120 y 180 MPa pasan a la clase más dura (decisión del plan).
+ * - Rango declarado: diámetro medio, 65-165 mm (título de p. 18). Fuera se calcula igual y la nota lo avisa.
+ *
+ * Langefors-Kihlström: no se programa. La ecuación de UC p. 13 (V = (d/33)·√(ρf·Sf/(c·f·E/V)), c sin corregir)
+ * no coincide con Tomalá y Guerrero (2026, UAzuay, p. 51 del PDF): Bmax = (D/33)·D·√(de·PRP/(k·f·S/B)), k = c + 0,05.
+ * Difieren en la forma (factor D de más) y en la constante de roca. Queda pendiente del libro.
  *
  * Konya y Ash se programan en pies y pulgadas, como se publicaron, y se convierten a SI en el borde.
  * Las entradas no admiten NaN ni infinito; los errores son de dominio (ver validation.hpp).
@@ -98,6 +109,28 @@ inline BlastDesign ash(double diameter_mm, ExplosiveClass cls, Initiation initia
             delayed ? "delayed: burden_m is the drilled row distance b = 1.4*B and spacing_m = K_S*b (square pattern, "
                       "IC 8550 p. 15), while stemming and subdrill use the true burden B"
                     : ""};
+}
+
+inline BlastDesign lopez_jimeno(double diameter_mm, double ucs_mpa) {
+    validation::require_positive(diameter_mm, "diameter_mm");
+    validation::require_positive(ucs_mpa, "ucs_mpa");
+    // Filas de UC p. 18: {V, E, T, Sp} en múltiplos de D [m]; los bordes van a la clase más dura.
+    static constexpr double table[4][4] = {{39, 51, 35, 10}, {37, 47, 34, 11}, {35, 43, 32, 12}, {33, 38, 30, 12}};
+    const int cls = ucs_mpa < 70.0 ? 0 : ucs_mpa < 120.0 ? 1 : ucs_mpa < 180.0 ? 2 : 3;
+    const double* k = table[cls];
+    const double d_m = diameter_mm / 1000.0;
+
+    std::string note;
+    if (ucs_mpa == 70.0 || ucs_mpa == 120.0 || ucs_mpa == 180.0)
+        note = "UCS on a class boundary: taken as the harder class (UC p. 18 does not resolve boundaries)";
+    if (diameter_mm < 65.0 || diameter_mm > 165.0) {
+        if (!note.empty()) note += "; ";
+        note += "diameter outside the 65-165 mm range of the table (UC p. 18)";
+    }
+    return {k[0] * d_m, k[1] * d_m, k[2] * d_m, k[3] * d_m,
+            {"LopezJimeno2003", Verification::Secondary,
+             "Lopez Jimeno et al. (2003) table by UCS, as adapted in U. Cantabria OCW, Tema 3.1 (Perez Alvarez), p. 18"},
+            note};
 }
 
 }  // namespace blastingpy::pattern
