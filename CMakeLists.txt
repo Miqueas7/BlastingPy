@@ -104,6 +104,7 @@ if(BLASTINGPY_BUILD_TESTS)
         tests/cpp/test_nearfield_monte_carlo.cpp
         tests/cpp/test_pattern_burden.cpp
         tests/cpp/test_pattern_layout.cpp
+        tests/cpp/test_pattern_sequence.cpp
     )
     target_link_libraries(blastingpy_tests PRIVATE
         blastingpy_core

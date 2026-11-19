@@ -284,4 +284,74 @@ inline Layout layout(const std::vector<Point>& outline, const std::vector<Point>
     return out;
 }
 
+/*
+ * Secuencia de encendido: firing_times_ms(). Decisión de diseño (§4.3), no fórmula publicada; la V se cotejó con
+ * Konya y Walter (1991), FHWA-HI-92-001, figs. 7.15 y 7.16 (p. 178 del PDF) y 7.22 (p. 181): los números de retardo
+ * valen fila + |columna − columna del vértice|, con el vértice en la misma columna en todas las filas
+ * (4 3 2 1 2 3 4 / 5 4 3 2 3 4 5 / 6 5 4 3 4 5 6). Aquí con retardos de fila y de taladro propios:
+ * - i es el rango del taladro en su fila por along_m, contado desde el lado de inicio (Left = along_m menor).
+ * - Row: t = r·row_delay + i·hole_delay. V: t = r·row_delay + |i − i_v(r)|·hole_delay.
+ * - i_v(0) es el taladro vértice (por omisión el central; con número par, el de menor rango de los dos centrales);
+ *   en las demás filas, el de along_m más cercano al del vértice (empate: menor rango).
+ */
+enum class Scheme { Row, V };
+enum class StartSide { Left, Right };
+
+inline std::vector<double> firing_times_ms(const std::vector<Hole>& holes, Scheme scheme, double hole_delay_ms,
+                                           double row_delay_ms, StartSide start = StartSide::Left,
+                                           int apex_hole_id = -1) {
+    validation::require_non_negative(hole_delay_ms, "hole_delay_ms");
+    validation::require_non_negative(row_delay_ms, "row_delay_ms");
+
+    // Índices de cada fila ordenados por along_m ascendente (empate: id), invertidos si inicia por la derecha.
+    int rows = 0;
+    for (const auto& h : holes) rows = std::max(rows, h.row + 1);
+    std::vector<std::vector<std::size_t>> order(rows);
+    for (std::size_t k = 0; k < holes.size(); ++k) order[holes[k].row].push_back(k);
+    for (auto& o : order) {
+        std::sort(o.begin(), o.end(), [&](std::size_t a, std::size_t b) {
+            return holes[a].along_m != holes[b].along_m ? holes[a].along_m < holes[b].along_m
+                                                        : holes[a].id < holes[b].id;
+        });
+        if (start == StartSide::Right) std::reverse(o.begin(), o.end());
+    }
+
+    double apex_along = 0.0;
+    int apex_rank0 = 0;
+    if (scheme == Scheme::V && !holes.empty()) {
+        if (apex_hole_id < 0) {
+            apex_rank0 = (static_cast<int>(order[0].size()) - 1) / 2;
+            apex_along = holes[order[0][apex_rank0]].along_m;
+        } else {
+            bool found = false;
+            for (std::size_t i = 0; i < order[0].size(); ++i)
+                if (holes[order[0][i]].id == apex_hole_id) {
+                    apex_rank0 = static_cast<int>(i);
+                    apex_along = holes[order[0][i]].along_m;
+                    found = true;
+                }
+            validation::require(found, "apex_hole_id", "must be the id of a hole in the front row (row 0)",
+                                double(apex_hole_id));
+        }
+    }
+
+    std::vector<double> t(holes.size());
+    for (int r = 0; r < rows; ++r) {
+        const auto& o = order[r];
+        int apex = apex_rank0;
+        if (scheme == Scheme::V && r > 0) {
+            double best = INFINITY;
+            for (std::size_t i = 0; i < o.size(); ++i) {
+                const double d = std::fabs(holes[o[i]].along_m - apex_along);
+                if (d < best) { best = d; apex = static_cast<int>(i); }  // estricto: el empate queda en el menor rango
+            }
+        }
+        for (std::size_t i = 0; i < o.size(); ++i) {
+            const double steps = scheme == Scheme::Row ? double(i) : std::fabs(double(i) - apex);
+            t[o[i]] = r * row_delay_ms + steps * hole_delay_ms;
+        }
+    }
+    return t;
+}
+
 }  // namespace blastingpy::pattern
