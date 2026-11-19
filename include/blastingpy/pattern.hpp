@@ -149,12 +149,20 @@ inline BlastDesign lopez_jimeno(double diameter_mm, double ucs_mpa) {
  * - En cada extremo de cada tramo de la fila, si el hueco hasta el contorno pasa de S/2, va un taladro de borde en
  *   el punto medio. Un tramo sin taladros de la grilla no lleva ninguno.
  * - front_off_ids: taladros de la fila 0 cuya distancia a la cresta real difiere de B en más de front_tolerance·B.
+ *   Esa distancia sale en crest_distance_m: es el burden real de la fila 0.
+ * - Tope: si área/(B·S) o profundidad/B pasa de 1 000 000 se rechaza antes de generar (unidades en mm, B diminuto).
  * Todo se calcula en un marco local (t a lo largo de u, v sobre n, origen O) para no perder precisión con UTM.
  */
 struct Point { double x, y; };
 enum class Arrangement { Square, Rectangular, Staggered };
 struct Hole { int id; int row; double x, y, along_m; bool edge; };
-struct Layout { std::vector<Hole> holes; std::vector<int> front_off_ids; double rear_gap_m; };
+// crest_distance_m: uno por taladro, distancia a la cresta real en la fila 0 (su burden real), NaN en las demás.
+struct Layout {
+    std::vector<Hole> holes;
+    std::vector<int> front_off_ids;
+    double rear_gap_m;
+    std::vector<double> crest_distance_m;
+};
 
 namespace detail {
 inline double segment_distance(double px, double py, double ax, double ay, double bx, double by) {
@@ -227,7 +235,15 @@ inline Layout layout(const std::vector<Point>& outline, const std::vector<Point>
         return false;
     };
 
-    Layout out{{}, {}, 0.0};
+    // Tope antes de generar: un contorno en mm, o B diminuto, daría millones de taladros (o de filas).
+    constexpr double max_holes = 1e6;
+    const double estimate = std::max(std::fabs(a2) / 2 / (burden_m * spacing_m), depth / burden_m);
+    if (estimate > max_holes)
+        throw std::invalid_argument("too large a pattern: about " + validation::detail::num(std::round(estimate)) +
+                                    " holes or rows (outline area / (burden_m * spacing_m), depth / burden_m), over "
+                                    "the limit of 1000000; check units (mm vs m?)");
+
+    Layout out{{}, {}, 0.0, {}};
     const double s = spacing_m;
     double first_v = 0, last_v = 0;
     int row = 0;  // fila informada: solo cuenta las que tienen taladros
@@ -269,6 +285,7 @@ inline Layout layout(const std::vector<Point>& outline, const std::vector<Point>
                                     " but the outline reaches only " + validation::detail::num(depth) +
                                     " m from the crest line on the inward side");
 
+    out.crest_distance_m.assign(out.holes.size(), NAN);
     for (std::size_t i = 0; i < out.holes.size(); ++i) {
         auto& h = out.holes[i];
         h.id = static_cast<int>(i) + 1;
@@ -278,6 +295,7 @@ inline Layout layout(const std::vector<Point>& outline, const std::vector<Point>
         for (std::size_t j = 0; j + 1 < crest.size(); ++j)
             d = std::min(d, detail::segment_distance(hx, hy, crest[j].x - o.x, crest[j].y - o.y,
                                                      crest[j + 1].x - o.x, crest[j + 1].y - o.y));
+        out.crest_distance_m[i] = d;
         if (std::fabs(d - burden_m) > front_tolerance * burden_m) out.front_off_ids.push_back(h.id);
     }
     out.rear_gap_m = depth - last_v;
@@ -304,10 +322,13 @@ inline std::vector<double> firing_times_ms(const std::vector<Hole>& holes, Schem
     validation::require_non_negative(row_delay_ms, "row_delay_ms");
 
     // Los taladros pueden venir de una tabla del usuario: filas 0..k sin huecos y along_m finito, o se leería
-    // fuera de rango.
+    // fuera de rango. Sin huecos, k < n: así row + 1 no desborda y `order` no reserva de más.
     int rows = 0;
     for (const auto& h : holes) {
         validation::require(h.row >= 0, "row", "must be >= 0", double(h.row));
+        validation::require(static_cast<std::size_t>(h.row) < holes.size(), "row",
+                            "must number the rows 0, 1, 2... without gaps (row beyond the number of holes)",
+                            double(h.row));
         validation::require_finite(h.along_m, "along_m");
         rows = std::max(rows, h.row + 1);
     }

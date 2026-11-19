@@ -239,6 +239,41 @@ TEST(PatternLayout, NoHoleFitsThrows) {
     }
 }
 
+// Contorno de 8 x 4 km con B = S = 5 m: unos 1,28 millones de taladros. Se corta antes de generar (unidades mal).
+TEST(PatternLayout, TooManyHolesAsksForUnits) {
+    try {
+        pt::layout(rect(8000, 4000), {{0, 4000}, {8000, 4000}}, 5, 5, Arrangement::Square);
+        FAIL() << "expected std::invalid_argument";
+    } catch (const std::invalid_argument& e) {
+        EXPECT_NE(std::string(e.what()).find("check units (mm vs m?)"), std::string::npos) << e.what();
+    }
+    // Un burden diminuto con un espaciamiento enorme: pocos taladros por área, pero 2 millones de filas (con B aún
+    // menor el contador de filas se desbordaría).
+    try {
+        pt::layout(rect(40, 20), {{0, 20}, {40, 20}}, 1e-5, 1e9, Arrangement::Rectangular);
+        FAIL() << "expected std::invalid_argument";
+    } catch (const std::invalid_argument& e) {
+        EXPECT_NE(std::string(e.what()).find("check units (mm vs m?)"), std::string::npos) << e.what();
+    }
+}
+
+// crest_distance_m: distancia de cada taladro de la fila 0 a la cresta real (NaN en las demás filas).
+TEST(PatternLayout, CrestDistanceOfFrontRow) {
+    const std::vector<Point> crest = {{0, 20}, {15, 20}, {15, 18}, {25, 18}, {25, 20}, {40, 20}};
+    const auto lay = pt::layout(rect(40, 20), crest, 5, 5, Arrangement::Square);
+    ASSERT_EQ(lay.crest_distance_m.size(), lay.holes.size());
+    for (std::size_t i = 0; i < lay.holes.size(); ++i) {
+        const auto& h = lay.holes[i];
+        if (h.row != 0) {
+            EXPECT_TRUE(std::isnan(lay.crest_distance_m[i])) << h.id;
+        } else if (h.x > 15 - 1e-9 && h.x < 25 + 1e-9) {
+            EXPECT_NEAR(lay.crest_distance_m[i], 3, 1e-9) << h.id;  // y = 15 frente al entrante de y = 18
+        } else if (h.x < 10 + 1e-9 || h.x > 30 - 1e-9) {
+            EXPECT_NEAR(lay.crest_distance_m[i], 5, 1e-9) << h.id;
+        }
+    }
+}
+
 TEST(PatternLayout, SquareRequiresEqualSpacing) {
     EXPECT_THROW(pt::layout(rect(40, 20), {{0, 20}, {40, 20}}, 5, 6, Arrangement::Square), std::invalid_argument);
     EXPECT_NO_THROW(pt::layout(rect(40, 20), {{0, 20}, {40, 20}}, 5, 6, Arrangement::Rectangular));

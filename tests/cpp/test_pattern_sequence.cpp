@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <climits>
 #include <cmath>
 #include <stdexcept>
 #include <vector>
@@ -87,4 +88,15 @@ TEST(PatternSequence, RejectsNonFiniteAlong) {
     EXPECT_THROW(pt::firing_times_ms(h, Scheme::Row, 17, 100), std::invalid_argument);
     h[1].along_m = INFINITY;
     EXPECT_THROW(pt::firing_times_ms(h, Scheme::V, 17, 100), std::invalid_argument);
+}
+
+TEST(PatternSequence, RejectsRowBeyondHoleCount) {
+    // Filas 0..k sin huecos implican k < n: una fila enorme (INT_MAX desbordaba row + 1) se rechaza sin reservar.
+    auto h = grid({1, 1});
+    h[1].row = INT_MAX;
+    EXPECT_THROW(pt::firing_times_ms(h, Scheme::Row, 17, 100), std::invalid_argument);
+    h[1].row = 2000000000;
+    EXPECT_THROW(pt::firing_times_ms(h, Scheme::V, 17, 100), std::invalid_argument);
+    h[1].row = 2;  // n = 2: la fila 2 ya no cabe
+    EXPECT_THROW(pt::firing_times_ms(h, Scheme::Row, 17, 100), std::invalid_argument);
 }

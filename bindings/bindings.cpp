@@ -475,7 +475,8 @@ NB_MODULE(_blastingpy_core, m) {
     nb::class_<pattern::Layout>(pat, "Layout", "Holes, the front-row holes off the design burden and the rear gap (m).")
         .def_ro("holes", &pattern::Layout::holes)
         .def_ro("front_off_ids", &pattern::Layout::front_off_ids)
-        .def_ro("rear_gap_m", &pattern::Layout::rear_gap_m);
+        .def_ro("rear_gap_m", &pattern::Layout::rear_gap_m)
+        .def_ro("crest_distance_m", &pattern::Layout::crest_distance_m);
     pat.def("layout", &pattern::layout, nb::arg("outline"), nb::arg("crest"), nb::arg("burden_m"),
             nb::arg("spacing_m"), nb::arg("arrangement"), nb::arg("front_tolerance") = 0.20,
             "Bench pattern inside the outline: rows parallel to the crest chord, one global grid, edge holes at the "
