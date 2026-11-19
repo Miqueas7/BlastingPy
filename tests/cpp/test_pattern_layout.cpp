@@ -180,6 +180,56 @@ TEST(PatternLayout, IrregularCrestFlagsFrontHoles) {
     EXPECT_EQ(got, expected);
 }
 
+// Cresta 10 m fuera del contorno: las filas de la grilla en y = 25 (fuera) y y = 20 (sobre el borde) quedan vacías y
+// se saltan. La primera fila informada es la de y = 15, a 15 m de la cresta: todos sus taladros van a front_off_ids.
+TEST(PatternLayout, CrestOutsideBeyondBurden) {
+    const auto lay = pt::layout(rect(40, 20), {{0, 30}, {40, 30}}, 5, 5, Arrangement::Square);
+    ASSERT_FALSE(lay.holes.empty());
+    EXPECT_EQ(lay.holes.front().row, 0);
+    const auto row0 = row_of(lay, 0);
+    ASSERT_EQ(row0.size(), 9u);
+    std::vector<int> ids;
+    for (const auto& h : row0) {
+        EXPECT_NEAR(h.y, 15, 1e-9);
+        ids.push_back(h.id);
+    }
+    auto got = lay.front_off_ids;
+    std::sort(got.begin(), got.end());
+    EXPECT_EQ(got, ids);
+    EXPECT_NEAR(row_of(lay, 1).front().y, 10, 1e-9);
+    EXPECT_NEAR(row_of(lay, 2).front().y, 5, 1e-9);
+    EXPECT_EQ(lay.holes.size(), 27u);
+}
+
+// La fila de la grilla de y = 10 cae en un cuello x ∈ (21, 24) sin posiciones (x = 40 − 5k): se salta, y la fila de
+// y = 5, detrás del cuello, sale como fila 1.
+TEST(PatternLayout, NeckDoesNotStopRows) {
+    const std::vector<Point> neck = {{0, 0},   {40, 0},  {40, 8},  {24, 8}, {24, 12}, {40, 12},
+                                     {40, 20}, {0, 20},  {0, 12},  {21, 12}, {21, 8}, {0, 8}};
+    const auto lay = pt::layout(neck, {{0, 20}, {40, 20}}, 5, 5, Arrangement::Square);
+    const auto row0 = row_of(lay, 0), row1 = row_of(lay, 1);
+    ASSERT_EQ(row0.size(), 9u);
+    ASSERT_EQ(row1.size(), 9u);
+    EXPECT_NEAR(row0.front().y, 15, 1e-9);
+    EXPECT_NEAR(row1.front().y, 5, 1e-9);
+    EXPECT_EQ(lay.holes.size(), 18u);
+    for (std::size_t i = 0; i < lay.holes.size(); ++i) EXPECT_EQ(lay.holes[i].id, static_cast<int>(i) + 1);
+}
+
+// El desfase del tresbolillo sigue la fila de la grilla, no la informada: con la cresta en y = 25 la primera fila
+// informada (y = 15) es la fila 1 de la grilla y lleva el desfase S/2, igual que la fila 1 con la cresta en y = 20.
+TEST(PatternLayout, StaggeredParityFollowsGridRow) {
+    const auto shifted = pt::layout(rect(40, 20), {{0, 25}, {40, 25}}, 5, 5.75, Arrangement::Staggered);
+    const auto ref = pt::layout(rect(40, 20), {{0, 20}, {40, 20}}, 5, 5.75, Arrangement::Staggered);
+    const auto a = row_of(shifted, 0), b = row_of(ref, 1);
+    ASSERT_EQ(a.size(), b.size());
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        EXPECT_NEAR(a[i].x, b[i].x, 1e-9);
+        EXPECT_NEAR(a[i].y, 15, 1e-9);
+        EXPECT_EQ(a[i].edge, b[i].edge);
+    }
+}
+
 TEST(PatternLayout, NoHoleFitsThrows) {
     try {
         pt::layout(rect(40, 3), {{0, 3}, {40, 3}}, 5, 5, Arrangement::Square);

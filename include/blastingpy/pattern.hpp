@@ -143,7 +143,9 @@ inline BlastDesign lopez_jimeno(double diameter_mm, double ucs_mpa) {
  * - Filas paralelas a la recta primer-último punto de la cresta, a (r+1)·B hacia el lado del centroide del contorno.
  * - Una sola grilla: O + k·S·u, más S/2 en las filas impares en tresbolillo. O es el extremo de la cresta desde el
  *   que apunta u, y u se orienta para que el interior quede a la izquierda: la cresta al revés da la misma malla.
- * - Dentro estricto: un collar sobre el contorno queda fuera. Las filas siguen mientras alguna posición caiga dentro.
+ * - Dentro estricto: un collar sobre el contorno queda fuera. Las filas cubren toda la profundidad del contorno sobre
+ *   +n; una fila sin taladros se salta (cresta fuera del contorno, cuellos). La fila informada (`row`) se renumera
+ *   desde 0 con las filas no vacías, pero el desfase del tresbolillo sigue la paridad de la fila de la grilla.
  * - En cada extremo de cada tramo de la fila, si el hueco hasta el contorno pasa de S/2, va un taladro de borde en
  *   el punto medio. Un tramo sin taladros de la grilla no lleva ninguno.
  * - front_off_ids: taladros de la fila 0 cuya distancia a la cresta real difiere de B en más de front_tolerance·B.
@@ -227,10 +229,11 @@ inline Layout layout(const std::vector<Point>& outline, const std::vector<Point>
 
     Layout out{{}, {}, 0.0};
     const double s = spacing_m;
-    double last_v = 0;
-    for (int r = 0;; ++r) {
+    double first_v = 0, last_v = 0;
+    int row = 0;  // fila informada: solo cuenta las que tienen taladros
+    // r es la fila de la grilla; más allá del vértice más lejano no hay interior.
+    for (int r = 0; (r + 1) * burden_m < depth; ++r) {
         const double v = (r + 1) * burden_m;
-        if (v >= depth) break;  // más allá del vértice más lejano no hay interior
         std::vector<double> cuts;
         for (std::size_t i = 0; i < tv.size(); ++i) {
             const auto& a = tv[i];
@@ -240,7 +243,7 @@ inline Layout layout(const std::vector<Point>& outline, const std::vector<Point>
         std::sort(cuts.begin(), cuts.end());
         const double offset = arrangement == Arrangement::Staggered && r % 2 == 1 ? s / 2 : 0.0;
         const auto add = [&](double t, bool edge) {
-            out.holes.push_back({0, r, o.x + t * ux + v * nx, o.y + t * uy + v * ny, t, edge});
+            out.holes.push_back({0, row, o.x + t * ux + v * nx, o.y + t * uy + v * ny, t, edge});
         };
         bool any = false;
         for (std::size_t i = 0; i + 1 < cuts.size(); i += 2) {
@@ -256,8 +259,10 @@ inline Layout layout(const std::vector<Point>& outline, const std::vector<Point>
             for (double t : ts) add(t, false);
             if (hi - ts.back() > s / 2) add((ts.back() + hi) / 2, true);
         }
-        if (!any) break;
+        if (!any) continue;  // fila vacía (cresta fuera, cuello): se salta, no corta las de detrás
+        if (row == 0) first_v = v;
         last_v = v;
+        ++row;
     }
     if (out.holes.empty())
         throw std::invalid_argument("no hole fits: burden_m = " + validation::detail::num(burden_m) +
@@ -268,7 +273,7 @@ inline Layout layout(const std::vector<Point>& outline, const std::vector<Point>
         auto& h = out.holes[i];
         h.id = static_cast<int>(i) + 1;
         if (h.row != 0) continue;
-        const double hx = h.along_m * ux + burden_m * nx, hy = h.along_m * uy + burden_m * ny;
+        const double hx = h.along_m * ux + first_v * nx, hy = h.along_m * uy + first_v * ny;
         double d = INFINITY;
         for (std::size_t j = 0; j + 1 < crest.size(); ++j)
             d = std::min(d, detail::segment_distance(hx, hy, crest[j].x - o.x, crest[j].y - o.y,
