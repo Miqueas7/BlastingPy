@@ -56,7 +56,8 @@ def test_burden_methods_requires_initiation():
 @pytest.mark.filterwarnings(REAR_GAP)
 def test_layout_default_staggered_spacing():
     holes = pt.layout(RECT, CREST, burden_m=4.0)
-    assert list(holes.columns) == ["hole_id", "row", "x_m", "y_m", "along_m", "edge", "burden_m", "spacing_m"]
+    assert list(holes.columns) == ["hole_id", "row", "x_m", "y_m", "along_m", "edge", "burden_m", "spacing_m",
+                                   "crest_distance_m"]
     assert list(holes["spacing_m"]) == pytest.approx([1.15 * 4.0] * len(holes)) and (holes["burden_m"] == 4.0).all()
     assert list(holes["hole_id"]) == list(range(1, len(holes) + 1)) and holes["row"].min() == 0
     with pytest.raises(ValueError, match="spacing_m"):
@@ -70,6 +71,37 @@ def test_layout_warns_irregular_crest():
     bumpy = np.array([[0.0, 0.0], [20.0, 2.5], [40.0, 0.0]])  # la cresta real se mete 2,5 m: la fila 0 queda cerca
     with pytest.warns(UserWarning, match="front row"):
         pt.layout(RECT, bumpy, burden_m=4.0)
+
+
+@pytest.mark.filterwarnings("ignore:front row")
+@pytest.mark.filterwarnings(REAR_GAP)
+def test_layout_crest_distance_is_the_real_front_burden():
+    # Entrante de 2 m entre x = 15 y x = 25: frente a él la fila 0 (y = 4) queda a 2 m de la cresta, no a B = 4.
+    notch = np.array([[0.0, 0.0], [15.0, 0.0], [15.0, 2.0], [25.0, 2.0], [25.0, 0.0], [40.0, 0.0]])
+    holes = pt.layout(RECT, notch, burden_m=4.0, spacing_m=4.0, arrangement="square")
+    front, back = holes[holes["row"] == 0], holes[holes["row"] != 0]
+    assert back["crest_distance_m"].isna().all() and front["crest_distance_m"].notna().all()
+    inside = front[(front["x_m"] >= 15.0) & (front["x_m"] <= 25.0)]
+    assert len(inside) == 3
+    np.testing.assert_allclose(inside["crest_distance_m"], 2.0, atol=1e-9)
+    assert (inside["burden_m"] == 4.0).all()  # burden_m sigue siendo el de diseño
+    far = front[(front["x_m"] <= 10.0) | (front["x_m"] >= 30.0)]
+    np.testing.assert_allclose(far["crest_distance_m"], 4.0, atol=1e-9)
+    side = front[np.isclose(front["x_m"], 12.0) | np.isclose(front["x_m"], 28.0)]  # al canto (15, 2): sqrt(9 + 4)
+    assert len(side) == 2
+    np.testing.assert_allclose(side["crest_distance_m"], math.sqrt(13.0), atol=1e-9)
+
+
+def test_layout_too_large_asks_for_units():
+    # Un contorno de 40 x 20 m dibujado en mm con B en m: decenas de millones de taladros. Se corta antes.
+    with pytest.raises(ValueError, match=r"check units \(mm vs m\?\)"):
+        pt.layout(RECT * 1000.0, CREST * 1000.0, burden_m=4.0)
+
+
+@pytest.mark.parametrize("bad", ["4", None, [4.0]])
+def test_layout_rejects_non_numeric_burden(bad):
+    with pytest.raises(ValueError, match=r"Domain error \[BlastingPy\]: parameter 'burden_m'"):
+        pt.layout(RECT, CREST, burden_m=bad)
 
 
 def test_layout_warns_rear_gap():
@@ -88,6 +120,13 @@ def test_sequence_adds_delays_and_rejects_missing_front_row():
         pt.sequence(holes[holes["row"] != 0], scheme="row", hole_delay_ms=17.0, row_delay_ms=100.0)
     with pytest.raises(ValueError, match="scheme"):
         pt.sequence(holes, scheme="diagonal", hole_delay_ms=17.0, row_delay_ms=100.0)
+
+
+def test_sequence_rejects_huge_row_without_crash():
+    # Una fila 2147483647 desbordaba row + 1 y escribía fuera del arreglo (segfault).
+    bad = pd.DataFrame({"hole_id": [1, 2], "row": [0, 2147483647], "along_m": [0.0, 1.0]})
+    with pytest.raises(ValueError, match="row"):
+        pt.sequence(bad, scheme="row", hole_delay_ms=17.0, row_delay_ms=100.0)
 
 
 @pytest.mark.filterwarnings("ignore::UserWarning")  # el hueco trasero y la mediana de la ley: no son el tema aquí

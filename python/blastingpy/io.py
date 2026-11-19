@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 import re
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1088,11 +1089,17 @@ def read_dxf_outline(path, *, outline_layer: str, crest_layer: str) -> tuple[np.
     """Outline and crest of a bench from a DXF file, as (N, 2) arrays in the file's units (m for a pattern).
 
     Each layer must hold exactly one LWPOLYLINE or 2D POLYLINE. The outline must be closed, by the closed flag or by a
-    last point equal to the first (that repeated point is dropped); the crest may be open or closed. Needs
+    last point equal to the first (that repeated point is dropped); the crest may be open or closed. Warns
+    when the header ``$INSUNITS`` gives units other than metres (6) or unitless (0). Needs
     ``pip install blastingpy[dxf]``.
     """
     ezdxf = _require_ezdxf()
-    msp = ezdxf.readfile(path).modelspace()
+    doc = ezdxf.readfile(path)
+    units = doc.header.get("$INSUNITS", 0)
+    if units not in (0, 6):  # 0 sin unidades, 6 metros
+        warnings.warn(f"DXF $INSUNITS = {units}: the drawing is not in metres (6) nor unitless (0), but the "
+                      "coordinates are read as metres; check units (mm vs m?)", UserWarning, stacklevel=2)
+    msp = doc.modelspace()
     outline, closed = _one_polyline(msp, outline_layer)
     if len(outline) > 1 and np.array_equal(outline[0], outline[-1]):
         outline, closed = outline[:-1], True

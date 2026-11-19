@@ -82,6 +82,51 @@ def test_read_outline_rejects_two_polylines(tmp_path):
         io.read_dxf_outline(f, outline_layer="C", crest_layer="K")
 
 
+def test_read_outline_warns_non_metric_units(tmp_path):
+    f = tmp_path / "mm.dxf"
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 4  # milímetros
+    doc.modelspace().add_lwpolyline(RECT.tolist(), close=True, dxfattribs={"layer": "C"})
+    doc.modelspace().add_lwpolyline(CREST.tolist(), dxfattribs={"layer": "K"})
+    doc.saveas(f)
+    with pytest.warns(UserWarning, match=r"\$INSUNITS = 4"):
+        io.read_dxf_outline(f, outline_layer="C", crest_layer="K")
+
+
+def _ties(f):
+    return [[tuple(p[:2]) for p in e.get_points()]
+            for e in ezdxf.readfile(f).modelspace().query("LWPOLYLINE[layer=='AMARRE']")]
+
+
+def test_tie_in_row_scheme_one_polyline_per_row(tmp_path):
+    f = tmp_path / "row.dxf"
+    h = _holes()
+    pt.to_dxf(h, f, outline=RECT, crest=CREST)
+    ties = _ties(f)
+    assert len(ties) == h["row"].nunique()
+    for line in ties:  # en el orden de encendido: along_m creciente desde la izquierda
+        xs = [x for x, _ in line]
+        assert xs == sorted(xs)
+
+
+def test_tie_in_v_scheme_goes_out_from_the_apex(tmp_path):
+    f = tmp_path / "v.dxf"
+    h = pt.layout(RECT, CREST, burden_m=4.0, spacing_m=4.0, arrangement="square")
+    h = pt.sequence(h, scheme="v", hole_delay_ms=17.0, row_delay_ms=42.0)
+    pt.to_dxf(h, f, outline=RECT, crest=CREST, diameter_mm=165.0)
+    ties = _ties(f)
+    assert len(ties) == 2 * h["row"].nunique()  # dos ramas por fila
+    for r, g in h.groupby("row"):
+        apex = g.loc[g["firing_time_s"].idxmin()]
+        branches = [line for line in ties if np.isclose(line[0][1], apex["y_m"])]
+        assert len(branches) == 2
+        for line in branches:
+            assert np.allclose(line[0], (apex["x_m"], apex["y_m"]))  # empieza en el vértice
+            d = [abs(x - apex["x_m"]) for x, _ in line]
+            assert d == sorted(d) and len(set(np.sign([x - apex["x_m"] for x, _ in line[1:]]))) == 1
+        assert sum(len(line) for line in branches) == len(g) + 1  # el vértice está en las dos
+
+
 def test_layers_by_delay(tmp_path):
     f = tmp_path / "d.dxf"
     pt.to_dxf(_holes(), f, outline=RECT, crest=CREST, layers_by="delay")

@@ -116,21 +116,29 @@ def layout(outline, crest, *, burden_m: float, spacing_m: float | None = None, a
     outline is more than S/2, an edge hole goes at its midpoint (``edge`` True).
 
     Columns: ``hole_id`` (1, 2, ... from the crest), ``row`` (0 = front row), ``x_m``, ``y_m``, ``along_m`` (position
-    along the rows), ``edge``, ``burden_m`` and ``spacing_m``. Warnings: the front-row holes whose distance to the real
-    crest differs from ``burden_m`` by more than ``front_tolerance`` (a fraction), and a rear gap larger than
-    ``burden_m / 2`` between the last row and the outline (no partial row is added there). Raises if no hole fits.
+    along the rows), ``edge``, ``burden_m``, ``spacing_m`` and ``crest_distance_m``. ``burden_m`` is the design burden
+    on every hole; ``crest_distance_m`` is the distance from each front-row hole to the real crest (its real burden),
+    NaN in the other rows. For flyrock, put ``crest_distance_m`` in place of ``burden_m`` in the front row before
+    ``flyrock.compare``: face-burst range grows as the burden shrinks, so the design burden underestimates it where
+    the crest comes closer. Warnings: the front-row holes whose distance to the real crest differs from ``burden_m``
+    by more than ``front_tolerance`` (a fraction), and a rear gap larger than ``burden_m / 2`` between the last row
+    and the outline (no partial row is added there). Raises if no hole fits, and before generating anything if the
+    pattern would pass 1,000,000 holes or rows (outline area / (B S) or depth / B): usually an outline in mm.
     """
     arr = _choice("arrangement", arrangement, _ARRANGEMENTS)
+    if not (_number(burden_m) and burden_m > 0):
+        raise _error("burden_m", f"must be finite and > 0. Received: {burden_m!r}")
     if spacing_m is None:
         if arrangement != "staggered":
             raise _error("spacing_m", f"is required for a {arrangement} pattern (only staggered has a default)")
-        spacing_m = _STAGGERED_RATIO * burden_m if _number(burden_m) else burden_m  # el núcleo nombra el error
+        spacing_m = _STAGGERED_RATIO * burden_m
     res = _pt.layout(_points("outline", outline), _points("crest", crest), burden_m, spacing_m, arr, front_tolerance)
-    holes = pd.DataFrame({"hole_id": [h.id for h in res.holes], "row": [h.row for h in res.holes],
-                          "x_m": [h.x for h in res.holes], "y_m": [h.y for h in res.holes],
-                          "along_m": [h.along_m for h in res.holes], "edge": [h.edge for h in res.holes]})
+    hs = res.holes  # cada lectura de res.holes copia el vector entero
+    holes = pd.DataFrame({"hole_id": [h.id for h in hs], "row": [h.row for h in hs], "x_m": [h.x for h in hs],
+                          "y_m": [h.y for h in hs], "along_m": [h.along_m for h in hs], "edge": [h.edge for h in hs]})
     holes["burden_m"] = float(burden_m)
     holes["spacing_m"] = float(spacing_m)
+    holes["crest_distance_m"] = res.crest_distance_m
     if res.front_off_ids:
         warnings.warn(f"front row: holes {list(res.front_off_ids)} are more than {front_tolerance:.0%} off the design "
                       f"burden ({burden_m:g} m) from the real crest", UserWarning, stacklevel=2)
@@ -192,6 +200,10 @@ def charge(holes: pd.DataFrame, *, bench_height_m: float, subdrill_m: float, ste
     The charge column is H + J - T (``bench_height_m + subdrill_m - stemming_m``), fully charged at
     ``flyrock.linear_charge(diameter_mm, explosive_density_kg_m3)`` (no decking or decoupling). Raises when the column
     would be zero or negative.
+
+    The result goes into ``flyrock.compare``, which reads ``burden_m``. From :func:`layout` that is the design burden
+    on every hole; in the front row the real burden is ``crest_distance_m``, so replace it there first, e.g.
+    ``front = holes["row"] == 0; holes.loc[front, "burden_m"] = holes.loc[front, "crest_distance_m"]``.
     """
     if not isinstance(holes, pd.DataFrame):
         raise _error("holes", "must be a pandas DataFrame")
@@ -222,10 +234,11 @@ def to_dxf(holes: pd.DataFrame, path, *, outline, crest, diameter_mm: float | No
 
     Layers: ``CONTORNO`` (outline, closed), ``CRESTA`` (crest), one per row ``FILA_01``... (or per nominal delay
     ``RETARDO_0017``... with ``layers_by="delay"``, needs ``delay_ms``), ``TEXTO`` (``"id / delay ms"``, or only the
-    id without a sequence) and ``AMARRE`` (one polyline per row joining the holes by increasing ``firing_time_s``,
-    only with a sequence). ``layer_names`` renames them: keys ``outline``, ``crest``, ``text``, ``tie`` and ``prefix``
-    (the ``FILA_`` / ``RETARDO_`` prefix). Each hole is a circle of ``diameter_mm`` (the column of that name, else
-    the argument; an error if neither). Needs ``pip install blastingpy[dxf]``.
+    id without a sequence) and ``AMARRE`` (the tie-in, only with a sequence: one polyline per row joining the holes by
+    increasing ``firing_time_s``; for a V, two per row, from the apex outward on each side). ``layer_names`` renames
+    them: keys ``outline``, ``crest``, ``text``, ``tie`` and ``prefix`` (the ``FILA_`` / ``RETARDO_`` prefix). Each
+    hole is a circle of ``diameter_mm`` (the column of that name, else the argument; an error if neither). Needs
+    ``pip install blastingpy[dxf]``.
     """
     from .io import _require_ezdxf
     ezdxf = _require_ezdxf()
@@ -262,9 +275,16 @@ def to_dxf(holes: pd.DataFrame, path, *, outline, crest, diameter_mm: float | No
         msp.add_text(label, height=text_height_m, dxfattribs={"layer": names["text"], "insert": (x + d / 2000.0, y)})
     if seq and "firing_time_s" in holes.columns:
         for _, g in holes.groupby("row"):
-            g = g.sort_values("firing_time_s", kind="stable")
-            if len(g) > 1:
-                msp.add_lwpolyline(list(zip(g["x_m"], g["y_m"])), dxfattribs={"layer": names["tie"]})
+            # El DXF no sabe el esquema: si el primero en salir no está en un extremo de la fila, es una V.
+            by_along = g.sort_values("along_m", kind="stable") if "along_m" in g.columns else None
+            apex = None if by_along is None else int(np.argmin(by_along["firing_time_s"].to_numpy()))
+            if apex is not None and 0 < apex < len(g) - 1:
+                branches = [by_along.iloc[apex::-1], by_along.iloc[apex:]]
+            else:
+                branches = [g.sort_values("firing_time_s", kind="stable")]
+            for b in branches:
+                if len(b) > 1:
+                    msp.add_lwpolyline(list(zip(b["x_m"], b["y_m"])), dxfattribs={"layer": names["tie"]})
     for name in {e.dxf.layer for e in msp}:  # ezdxf does not create the layer table entries by itself
         if name not in doc.layers:
             doc.layers.add(name)
