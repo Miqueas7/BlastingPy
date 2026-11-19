@@ -102,6 +102,7 @@ if(BLASTINGPY_BUILD_TESTS)
         tests/cpp/test_nearfield_column.cpp
         tests/cpp/test_nearfield_superposition.cpp
         tests/cpp/test_nearfield_monte_carlo.cpp
+        tests/cpp/test_pattern_burden.cpp
     )
     target_link_libraries(blastingpy_tests PRIVATE
         blastingpy_core
