@@ -64,22 +64,30 @@ TEST(PatternKonya, InfoIsPrimary) {
     EXPECT_NE(d.info.source.find("FHWA-HI-92-001"), std::string::npos) << d.info.source;
 }
 
-TEST(PatternAsh, BurdenByClass) {
+TEST(PatternAsh, BurdenByClass) {  // instantáneo: burden_m es el B verdadero
     const double d6 = 6 * mm_per_in;
-    expect_rel(pt::ash(d6, pt::ExplosiveClass::Average, pt::Initiation::Delayed).burden_m, 30 * 6 / 12.0 * m_per_ft, 1e-9);
-    expect_rel(pt::ash(d6, pt::ExplosiveClass::LowDensity, pt::Initiation::Delayed).burden_m, 25 * 6 / 12.0 * m_per_ft,
-               1e-9);
-    expect_rel(pt::ash(d6, pt::ExplosiveClass::Dense, pt::Initiation::Delayed).burden_m, 35 * 6 / 12.0 * m_per_ft, 1e-9);
+    const auto inst = pt::Initiation::Instantaneous;
+    expect_rel(pt::ash(d6, pt::ExplosiveClass::Average, inst).burden_m, 30 * 6 / 12.0 * m_per_ft, 1e-9);
+    expect_rel(pt::ash(d6, pt::ExplosiveClass::LowDensity, inst).burden_m, 25 * 6 / 12.0 * m_per_ft, 1e-9);
+    expect_rel(pt::ash(d6, pt::ExplosiveClass::Dense, inst).burden_m, 35 * 6 / 12.0 * m_per_ft, 1e-9);
 }
 
-// Promedios de la Tabla 1 (IC 8550 p. 16): K_S 2 simultáneo, K_S 1 sobre b = 1,4B con retardos, K_J 0,3, K_T 0,7.
+// Promedios de la Tabla 1 (IC 8550 p. 16): K_S 2 simultáneo, K_J 0,3, K_T 0,7.
 TEST(PatternAsh, RatiosFromTable1) {
     const auto inst = pt::ash(150, pt::ExplosiveClass::Average, pt::Initiation::Instantaneous);
-    const auto del = pt::ash(150, pt::ExplosiveClass::Average, pt::Initiation::Delayed);
     expect_rel(inst.spacing_m, 2.0 * inst.burden_m, 1e-12);
-    expect_rel(del.spacing_m, 1.4 * del.burden_m, 1e-12);
-    expect_rel(del.subdrill_m, 0.3 * del.burden_m, 1e-12);
-    expect_rel(del.stemming_m, 0.7 * del.burden_m, 1e-12);
+    expect_rel(inst.subdrill_m, 0.3 * inst.burden_m, 1e-12);
+    expect_rel(inst.stemming_m, 0.7 * inst.burden_m, 1e-12);
+}
+
+// Con retardos la fila va en el marco de la malla perforada (p. 15): b = 1,4B, s = K_S·b con K_S = 1 (Tabla 1,
+// p. 16); taco y sobreperforación sobre el B verdadero = 30·6/12 = 15 ft.
+TEST(PatternAsh, DelayedUsesDrilledFrame) {
+    const auto d = pt::ash(6 * mm_per_in, pt::ExplosiveClass::Average, pt::Initiation::Delayed);
+    expect_rel(d.burden_m, 1.4 * 15 * m_per_ft, 1e-9);
+    expect_rel(d.spacing_m, 1.0 * d.burden_m, 1e-12);
+    expect_rel(d.stemming_m, 0.7 * 15 * m_per_ft, 1e-9);
+    expect_rel(d.subdrill_m, 0.3 * 15 * m_per_ft, 1e-9);
 }
 
 TEST(PatternAsh, InfoIsSecondary) {

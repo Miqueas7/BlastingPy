@@ -19,7 +19,8 @@
  *   35 denso (hidrogeles, gelatinas), para roca de ~2,7 g/cm³: p. 14.
  * - Instantáneo: S = K_S·B, K_S = 1,8-2 (p. 14); se usa el promedio 2 de la Tabla 1 (p. 16).
  * - Con retardos: s = K_S·b con b = 1,4·B (malla cuadrada), K_S = 1-1,2 (p. 15); se usa el promedio 1 de la Tabla 1
- *   (p. 16). spacing_m es la separación s en la fila; la distancia perforada entre filas es b = 1,4·B, no B.
+ *   (p. 16). Cada fila va en el marco de la malla perforada, como Konya: con retardos burden_m = b = 1,4·B y
+ *   spacing_m = s; taco y sobreperforación siguen sobre el burden verdadero B (pp. 15-16).
  * - J = K_J·B con K_J = 0,3 (preferido, p. 15; promedio de la Tabla 1, p. 16).
  * - T = K_T·B con K_T = 0,7 (p. 16; promedio de la Tabla 1, p. 16). No está en pp. 14-15.
  *
@@ -86,14 +87,16 @@ inline BlastDesign ash(double diameter_mm, ExplosiveClass cls, Initiation initia
     const double kb = cls == ExplosiveClass::LowDensity ? 25.0 : cls == ExplosiveClass::Dense ? 35.0 : 30.0;
     const double b_ft = kb * (diameter_mm / units::mm_per_in) / 12.0;
     const bool delayed = initiation == Initiation::Delayed;
-    const double s_ft = delayed ? 1.0 * (1.4 * b_ft) : 2.0 * b_ft;
-    return {b_ft * units::m_per_ft, s_ft * units::m_per_ft, 0.7 * b_ft * units::m_per_ft,
+    // Marco de la malla perforada, como Konya: con retardos las filas se perforan a b = 1,4·B (p. 15).
+    const double drilled_b_ft = delayed ? 1.4 * b_ft : b_ft;
+    const double s_ft = delayed ? 1.0 * drilled_b_ft : 2.0 * b_ft;
+    return {drilled_b_ft * units::m_per_ft, s_ft * units::m_per_ft, 0.7 * b_ft * units::m_per_ft,
             0.3 * b_ft * units::m_per_ft,
             {"USBM-IC8550", Verification::Secondary,
              "Ash's ratios in Pugliese (1972), USBM IC 8550: K_B p. 14, K_S pp. 14-15, K_J p. 15, K_T p. 16 "
              "(averages of Table 1, p. 16)"},
-            delayed ? "delayed: spacing is the in-row separation s = K_S*b with b = 1.4*B (square pattern, IC 8550 "
-                      "p. 15); rows are drilled b apart"
+            delayed ? "delayed: burden_m is the drilled row distance b = 1.4*B and spacing_m = K_S*b (square pattern, "
+                      "IC 8550 p. 15), while stemming and subdrill use the true burden B"
                     : ""};
 }
 
