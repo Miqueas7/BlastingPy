@@ -103,3 +103,19 @@ def test_nearfield_example(tmp_path, monkeypatch, capsys):
     for start in ("Holmberg-Persson", "Heelan", "Monte Carlo"):
         assert any(line.startswith(start) for line in lines), start
     assert any(line.startswith("  warning:") for line in lines)  # the warnings the library returns are shown
+
+
+EXAMPLE_6 = pathlib.Path(__file__).resolve().parents[2] / "examples" / "06-bench-pattern" / "bench_pattern.py"
+
+
+def test_bench_pattern_example(tmp_path, monkeypatch, capsys):
+    pytest.importorskip("ezdxf")
+    monkeypatch.setattr(sys, "argv", [str(EXAMPLE_6), str(tmp_path)])
+    with pytest.warns(UserWarning) as caught:  # only the site law's median warning: the layout raises none
+        runpy.run_path(str(EXAMPLE_6), run_name="__main__")
+    assert {str(w.message) for w in caught} == {"amplitudes are the site law's median: about half of the holes "
+                                                "exceed it"}
+    assert (tmp_path / "malla.dxf").is_file()
+    lines = capsys.readouterr().out.splitlines()
+    for start in ("Layout:", "Sequence:", "Charge:", "DXF written", "Simulated PPV"):
+        assert any(line.startswith(start) for line in lines), start

@@ -18,11 +18,11 @@ and its Monte Carlo).
 ## Install
 
 ```bash
-python -m pip install "blastingpy[io,viz]"
+python -m pip install "blastingpy[io,viz,dxf]"
 ```
 
 Wheels are published for Python 3.10 to 3.14 on Linux, Windows and macOS. Extras: `io` (read and write `.xlsx`), `viz`
-(charts), `seismic` (ObsPy readers). To build from the source distribution on PyPI (needs a C++ compiler and CMake):
+(charts), `dxf` (read and write `.dxf`), `seismic` (ObsPy readers). To build from the source distribution on PyPI (needs a C++ compiler and CMake):
 
 ```bash
 python -m pip install --no-binary blastingpy "blastingpy[io,viz]"
@@ -270,6 +270,34 @@ A complete, runnable version with synthetic data is in [the worked case 05](http
 
 **Not included, and the paper that would unlock it:** the scaled Heelan model and its constant γ_n (Blair & Minchinton 2006, Fragblast-8, pp. 152-159; the column here is the standard Heelan element with Blair's 2008 weights); the exact solution for the short charge (Blair 2007 and Meredith 1990; read, out of scope); the fluctuating seed of the Monte Carlo (its normalization is derived in Blair 1993a, Int. J. Numer. Anal. Methods Geomech. 17: 95-118); the composition of the longitudinal, transverse and vertical components (Blair 1999, eqs. 15a-15c: the sign convention depends on a figure); the statistical charge and its spectrum (Blair 1999, eqs. 17-23: read, not implemented; eq. 23 as printed carries a factor that its own limit does not give); Heelan's energy partition and his SV/P ratio of 1.6 (the printed formulas are inconsistent); the PPV at the end of the crushing zone (Onederra & Esen 2004, eq. 5, with Liu & Katsabanis 1993 and Esen et al. 2003: an exponent could not be verified and it needs non-ideal detonation pressures); and Holmberg & Persson's own papers (1979) and Persson, Holmberg & Lee (1994, p. 247), with which the integral, the surface constants and the critical PPV would be [V1]. Their 700-1000 mm/s damage limit is for Swedish igneous rocks, as reported by NIOSH, and is not offered as a general criterion.
 
+## Bench pattern
+
+`blastingpy.pattern` computes the burden with four methods side by side (Konya [V1, FHWA], López Jimeno and Ash [V2];
+Langefors-Kihlström is listed but not implemented, because the two secondary sources that give its equation disagree,
+pending the 1978 book), lays the holes inside a blast outline, assigns firing times (row or V sequence), computes the
+charge per hole and writes a DXF (outline, crest on its own layer `CRESTA`, holes by row or by delay, labels and tie-in).
+The DXF needs the optional extra `dxf`. The facts and marks are on [the documentation site](https://miqueas.dev/blastingpy/en/).
+
+```python
+import numpy as np
+from blastingpy import pattern
+
+methods = pattern.burden_methods(diameter_mm=165.0, bench_height_m=10.0, rock_density_kg_m3=2700.0,
+                                 explosive_density_kg_m3=850.0, initiation="delayed", ucs_mpa=90.0,
+                                 explosive_class="low_density")          # one row per method
+outline = np.array([[0.0, 0.0], [48.0, 0.0], [48.0, 26.0], [0.0, 26.0]])
+crest = np.array([[0.0, 0.0], [48.0, 0.0]])
+konya = methods.loc["konya"]
+holes = pattern.layout(outline, crest, burden_m=4.2, spacing_m=4.9, arrangement="rectangular")
+holes = pattern.sequence(holes, scheme="v", hole_delay_ms=17.0, row_delay_ms=42.0)
+holes = pattern.charge(holes, bench_height_m=10.0, subdrill_m=konya.subdrill_m, stemming_m=konya.stemming_m,
+                       diameter_mm=165.0, explosive_density_kg_m3=850.0)
+pattern.to_dxf(holes, "malla.dxf", outline=outline, crest=crest, diameter_mm=165.0)   # needs blastingpy[dxf]
+```
+
+A complete, runnable version with an invented outline, ending in the simulated PPV, is in `examples/06-bench-pattern/`
+of the source distribution.
+
 ## Conventions
 
 - **Units.** Inside the library everything is SI: m, kg, mm/s, Hz. `read_events(units="imperial")` (or a dict per
@@ -372,7 +400,7 @@ If BlastingPy helps your work, please cite it (the metadata is in `CITATION.cff`
 source distribution):
 
 > Quintanilla Ventura, M. (2026). *BlastingPy: blast vibration, airblast, flyrock and near-field analysis for mining*
-> (version 0.1.1) [Computer software]. https://miqueas.dev/blastingpy
+> (version 0.2.0) [Computer software]. https://miqueas.dev/blastingpy
 
 Each result also records the method and source it follows (`MethodInfo`); cite that original source as well.
 
