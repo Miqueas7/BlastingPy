@@ -43,5 +43,5 @@ def test_io_star_import_brings_only_the_public_names():
     from blastingpy import io
 
     assert set(io.__all__) == {"Record", "from_arrays", "infer_units", "read_instantel_ascii",
-                               "read_instantel_histogram", "read_waveform_csv", "read_obspy"}
+                               "read_instantel_histogram", "read_waveform_csv", "read_obspy", "read_dxf_outline"}
     assert {"Candidate", "Criterion", "candidates"} <= set(blastingpy.criteria.__all__)

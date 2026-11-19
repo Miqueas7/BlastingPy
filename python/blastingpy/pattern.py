@@ -25,7 +25,7 @@ from .flyrock import linear_charge
 
 BURDEN_METHODS = ("konya", "lopez_jimeno", "ash", "langefors")
 
-__all__ = ["BURDEN_METHODS", "burden_methods", "layout", "sequence", "charge"]
+__all__ = ["BURDEN_METHODS", "burden_methods", "layout", "sequence", "charge", "to_dxf"]
 
 _INITIATIONS = {"delayed": _pt.Initiation.Delayed, "instantaneous": _pt.Initiation.Instantaneous}
 _CLASSES = {"low_density": _pt.ExplosiveClass.LowDensity, "average": _pt.ExplosiveClass.Average,
@@ -210,3 +210,62 @@ def charge(holes: pd.DataFrame, *, bench_height_m: float, subdrill_m: float, ste
     out["linear_charge_kg_m"] = lin
     out["charge_kg"] = lin * column_m
     return out
+
+
+def _points_xy(name: str, values) -> list:
+    return [(p.x, p.y) for p in _points(name, values)]
+
+
+def to_dxf(holes: pd.DataFrame, path, *, outline, crest, diameter_mm: float | None = None, layers_by: str = "row",
+           text_height_m: float = 0.5, layer_names: dict | None = None) -> None:
+    """Write the pattern to a DXF R2010 file, in the same coordinates as ``holes`` (m).
+
+    Layers: ``CONTORNO`` (outline, closed), ``CRESTA`` (crest), one per row ``FILA_01``... (or per nominal delay
+    ``RETARDO_0017``... with ``layers_by="delay"``, needs ``delay_ms``), ``TEXTO`` (``"id / delay ms"``, or only the
+    id without a sequence) and ``AMARRE`` (one polyline per row joining the holes by increasing ``firing_time_s``,
+    only with a sequence). ``layer_names`` renames them: keys ``outline``, ``crest``, ``text``, ``tie`` and ``prefix``
+    (the ``FILA_`` / ``RETARDO_`` prefix). Each hole is a circle of ``diameter_mm`` (the column of that name, else
+    the argument; an error if neither). Needs ``pip install blastingpy[dxf]``.
+    """
+    from .io import _require_ezdxf
+    ezdxf = _require_ezdxf()
+    if not isinstance(holes, pd.DataFrame):
+        raise _error("holes", "must be a pandas DataFrame")
+    miss = [c for c in ("hole_id", "row", "x_m", "y_m") if c not in holes.columns]
+    if miss:
+        raise _error("holes", f"is missing the column {miss[0]!r}")
+    if layers_by not in ("row", "delay"):
+        raise _error("layers_by", f"must be 'row' or 'delay'. Received: {layers_by!r}")
+    seq = "delay_ms" in holes.columns
+    if layers_by == "delay" and not seq:
+        raise _error("layers_by", "'delay' needs the column 'delay_ms' (run sequence first)")
+    if not (_number(text_height_m) and text_height_m > 0):
+        raise _error("text_height_m", f"must be finite and > 0. Received: {text_height_m!r}")
+    names = {"outline": "CONTORNO", "crest": "CRESTA", "text": "TEXTO", "tie": "AMARRE",
+             "prefix": "FILA_" if layers_by == "row" else "RETARDO_", **(layer_names or {})}
+    if "diameter_mm" in holes.columns:
+        diam = holes["diameter_mm"].to_numpy(dtype=float)
+    elif diameter_mm is not None and _number(diameter_mm) and diameter_mm > 0:
+        diam = np.full(len(holes), float(diameter_mm))
+    else:
+        raise _error("diameter_mm", "is required when holes has no 'diameter_mm' column (finite and > 0)")
+    doc = ezdxf.new("R2010")
+    msp = doc.modelspace()
+    msp.add_lwpolyline(_points_xy("outline", outline), close=True, dxfattribs={"layer": names["outline"]})
+    msp.add_lwpolyline(_points_xy("crest", crest), dxfattribs={"layer": names["crest"]})
+    for (_, h), d in zip(holes.iterrows(), diam.tolist()):
+        layer = (f"{names['prefix']}{int(h['row']) + 1:02d}" if layers_by == "row"
+                 else f"{names['prefix']}{int(round(h['delay_ms'])):04d}")
+        x, y = float(h["x_m"]), float(h["y_m"])
+        msp.add_circle((x, y), d / 2000.0, dxfattribs={"layer": layer})
+        label = f"{int(h['hole_id'])} / {h['delay_ms']:g} ms" if seq else f"{int(h['hole_id'])}"
+        msp.add_text(label, height=text_height_m, dxfattribs={"layer": names["text"], "insert": (x + d / 2000.0, y)})
+    if seq and "firing_time_s" in holes.columns:
+        for _, g in holes.groupby("row"):
+            g = g.sort_values("firing_time_s", kind="stable")
+            if len(g) > 1:
+                msp.add_lwpolyline(list(zip(g["x_m"], g["y_m"])), dxfattribs={"layer": names["tie"]})
+    for name in {e.dxf.layer for e in msp}:  # ezdxf does not create the layer table entries by itself
+        if name not in doc.layers:
+            doc.layers.add(name)
+    doc.saveas(path)

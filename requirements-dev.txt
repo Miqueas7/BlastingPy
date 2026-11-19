@@ -6,6 +6,7 @@ contourpy==1.4.0
 cycler==0.12.1
 decorator==5.3.1
 et_xmlfile==2.0.0
+ezdxf==1.4.5
 flatbuffers==25.12.19
 fonttools==4.68.0
 hatch-fancy-pypi-readme==25.1.0
