@@ -10,10 +10,10 @@ checks the result against a regulatory criterion, stating the edition, table, ma
 **Documentation: <https://miqueas.dev/blastingpy>** (guide, methods, worked examples and API reference, in English
 and Spanish).
 
-**Status:** version 0.1.1 (0.1.0 was the first release; 0.1.1 only fixes the package metadata). Its five blocks: events table, attenuation law, maximum charge and compliance
-verdict; reading seismograph records (waveform, PPV, vector sum, frequency); airblast; flyrock (published range models,
-per-hole comparison and clearance distance); and near-field vibration (Holmberg-Persson, Heelan, whole-blast simulation
-and its Monte Carlo).
+**Status:** version 0.2.0. Its six blocks: events table, attenuation law, maximum charge and compliance verdict;
+reading seismograph records (waveform, PPV, vector sum, frequency); airblast; flyrock (published range models, per-hole
+comparison and clearance distance); near-field vibration (Holmberg-Persson, Heelan, whole-blast simulation and its
+Monte Carlo); and the bench pattern (burden by several methods, hole layout, firing sequence, charge per hole and DXF).
 
 ## Install
 
@@ -25,7 +25,7 @@ Wheels are published for Python 3.10 to 3.14 on Linux, Windows and macOS. Extras
 (charts), `dxf` (read and write `.dxf`), `seismic` (ObsPy readers). To build from the source distribution on PyPI (needs a C++ compiler and CMake):
 
 ```bash
-python -m pip install --no-binary blastingpy "blastingpy[io,viz]"
+python -m pip install --no-binary blastingpy "blastingpy[io,viz,dxf]"
 ```
 
 ## Example
@@ -297,6 +297,22 @@ pattern.to_dxf(holes, "malla.dxf", outline=outline, crest=crest, diameter_mm=165
 
 A complete, runnable version with an invented outline, ending in the simulated PPV, is in `examples/06-bench-pattern/`
 of the source distribution.
+
+**Front row and flyrock.** `layout` puts the design burden in `burden_m` on every hole, and adds `crest_distance_m`: the
+distance from each front-row hole to the real crest, NaN in the other rows. That distance is the real burden of the
+front row. `flyrock.compare` reads `burden_m`, and the face-burst range grows as B^-2.6 (Richards & Moore), so a front
+burden 20 % short gives about 1.8 times the range. Put the real burden in the front row before comparing:
+
+```python
+front = holes["row"] == 0
+holes.loc[front, "burden_m"] = holes.loc[front, "crest_distance_m"]
+```
+
+**Limits.** Vertical holes, one free face (the crest) and one explosive per hole (a full column, no decks). The
+edge-hole rule and the row rules (rows parallel to the crest line, empty rows skipped) are design decisions without a
+published source. No partial row is added at the back: a rear gap over B/2 only gives a warning. Coordinates are in
+metres: a pattern over 1,000,000 holes or rows is refused (usually an outline drawn in mm), and
+`io.read_dxf_outline` warns when the DXF header (`$INSUNITS`) gives other units.
 
 ## Conventions
 

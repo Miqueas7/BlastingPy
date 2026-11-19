@@ -11,10 +11,11 @@ magnitud y el método de frecuencia que usó.
 **Documentación: <https://miqueas.dev/blastingpy>** (guía, métodos, casos resueltos y referencia de la API, en español
 e inglés).
 
-**Estado:** versión 0.1.1 (la 0.1.0 fue la primera publicada; la 0.1.1 solo corrige los metadatos del paquete). Sus cinco bloques: tabla de eventos, ley de atenuación, carga máxima y
-veredicto de cumplimiento; lectura de registros del sismógrafo (forma de onda, PPV, suma vectorial, frecuencia);
-sobrepresión de aire; proyección de rocas (modelos publicados de alcance, comparación por pozo y distancia de despeje);
-y vibración en campo cercano (Holmberg-Persson, Heelan, simulación de la voladura completa y su Monte Carlo).
+**Estado:** versión 0.2.0. Sus seis bloques: tabla de eventos, ley de atenuación, carga máxima y veredicto de
+cumplimiento; lectura de registros del sismógrafo (forma de onda, PPV, suma vectorial, frecuencia); sobrepresión de
+aire; proyección de rocas (modelos publicados de alcance, comparación por pozo y distancia de despeje); vibración en
+campo cercano (Holmberg-Persson, Heelan, simulación de la voladura completa y su Monte Carlo); y la malla de banco
+(burden por varios métodos, reparto de taladros, secuencia de encendido, carga por taladro y DXF).
 
 ## Instalación
 
@@ -26,7 +27,7 @@ Hay ruedas para Python 3.10 a 3.14 en Linux, Windows y macOS. Extras: `io` (leer
 `seismic` (lectores de ObsPy). Para compilar desde la distribución de código fuente de PyPI (hacen falta un compilador de C++ y CMake):
 
 ```bash
-python -m pip install --no-binary blastingpy "blastingpy[io,viz]"
+python -m pip install --no-binary blastingpy "blastingpy[io,viz,dxf]"
 ```
 
 ## Ejemplo
@@ -302,6 +303,24 @@ pattern.to_dxf(holes, "malla.dxf", outline=outline, crest=crest, diameter_mm=165
 
 Una versión completa y ejecutable, con un contorno inventado y el PPV simulado al final, está en
 `examples/06-bench-pattern/` de la distribución de código fuente.
+
+**Primera fila y proyección de rocas.** `layout` pone el burden de diseño en `burden_m` en todos los taladros y agrega
+`crest_distance_m`: la distancia de cada taladro de la primera fila a la cresta real, NaN en las demás filas. Esa
+distancia es el burden real de la primera fila. `flyrock.compare` lee `burden_m`, y el alcance por la cara crece como
+B^-2,6 (Richards y Moore): un burden de frente 20 % menor da cerca de 1,8 veces el alcance. Antes de comparar, pon el
+burden real en la primera fila:
+
+```python
+front = holes["row"] == 0
+holes.loc[front, "burden_m"] = holes.loc[front, "crest_distance_m"]
+```
+
+**Límites.** Taladros verticales, una sola cara libre (la cresta) y un solo explosivo por taladro (columna completa,
+sin cubiertas). La regla de los taladros de borde y las reglas de las filas (paralelas a la recta de la cresta, las
+filas vacías se saltan) son decisiones de diseño sin fuente publicada. No se agrega una fila parcial al fondo: un
+hueco trasero mayor que B/2 solo da un aviso. Las coordenadas van en metros: una malla de más de 1 000 000 de taladros
+o de filas se rechaza (casi siempre un contorno dibujado en mm), y `io.read_dxf_outline` avisa cuando la cabecera del
+DXF (`$INSUNITS`) indica otras unidades.
 
 ## Convenciones
 
