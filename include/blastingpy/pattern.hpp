@@ -303,11 +303,20 @@ inline std::vector<double> firing_times_ms(const std::vector<Hole>& holes, Schem
     validation::require_non_negative(hole_delay_ms, "hole_delay_ms");
     validation::require_non_negative(row_delay_ms, "row_delay_ms");
 
-    // Índices de cada fila ordenados por along_m ascendente (empate: id), invertidos si inicia por la derecha.
+    // Los taladros pueden venir de una tabla del usuario: filas 0..k sin huecos y along_m finito, o se leería
+    // fuera de rango.
     int rows = 0;
-    for (const auto& h : holes) rows = std::max(rows, h.row + 1);
+    for (const auto& h : holes) {
+        validation::require(h.row >= 0, "row", "must be >= 0", double(h.row));
+        validation::require_finite(h.along_m, "along_m");
+        rows = std::max(rows, h.row + 1);
+    }
+    // Índices de cada fila ordenados por along_m ascendente (empate: id), invertidos si inicia por la derecha.
     std::vector<std::vector<std::size_t>> order(rows);
     for (std::size_t k = 0; k < holes.size(); ++k) order[holes[k].row].push_back(k);
+    for (int r = 0; r < rows; ++r)
+        validation::require(!order[r].empty(), "row", "must number the rows 0, 1, 2... without gaps (missing row)",
+                            double(r));
     for (auto& o : order) {
         std::sort(o.begin(), o.end(), [&](std::size_t a, std::size_t b) {
             return holes[a].along_m != holes[b].along_m ? holes[a].along_m < holes[b].along_m

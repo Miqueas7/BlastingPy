@@ -66,3 +66,25 @@ TEST(PatternSequence, RejectsBadDelays) {
     EXPECT_THROW(pt::firing_times_ms(grid({3}), Scheme::Row, 1, NAN), std::invalid_argument);
     EXPECT_THROW(pt::firing_times_ms(grid({3}), Scheme::Row, INFINITY, 1), std::invalid_argument);
 }
+
+TEST(PatternSequence, RejectsRowsNotConsecutiveFromZero) {
+    // sequence() recibe tablas del usuario: sin la fila 0, o con un hueco, se leería fuera de rango.
+    auto no_front = grid({3, 3});
+    no_front.erase(no_front.begin(), no_front.begin() + 3);
+    EXPECT_THROW(pt::firing_times_ms(no_front, Scheme::Row, 17, 100), std::invalid_argument);
+    EXPECT_THROW(pt::firing_times_ms(no_front, Scheme::V, 17, 100), std::invalid_argument);
+    auto gap = grid({3, 3});
+    for (auto& h : gap) if (h.row == 1) h.row = 2;
+    EXPECT_THROW(pt::firing_times_ms(gap, Scheme::Row, 17, 100), std::invalid_argument);
+    auto negative = grid({3});
+    negative[0].row = -1;
+    EXPECT_THROW(pt::firing_times_ms(negative, Scheme::Row, 17, 100), std::invalid_argument);
+}
+
+TEST(PatternSequence, RejectsNonFiniteAlong) {
+    auto h = grid({3});
+    h[1].along_m = NAN;
+    EXPECT_THROW(pt::firing_times_ms(h, Scheme::Row, 17, 100), std::invalid_argument);
+    h[1].along_m = INFINITY;
+    EXPECT_THROW(pt::firing_times_ms(h, Scheme::V, 17, 100), std::invalid_argument);
+}
