@@ -310,7 +310,7 @@ holes.loc[front, "burden_m"] = holes.loc[front, "crest_distance_m"]
 
 **Limits.** Vertical holes, one free face (the crest) and one explosive per hole (a full column, no decks). The
 edge-hole rule and the row rules (rows parallel to the crest line, empty rows skipped) are design decisions without a
-published source. No partial row is added at the back: a rear gap over B/2 only gives a warning. Coordinates are in
+published source. No partial row is added at the back: the outline is the limit of the rock to blast, and a rear gap over B only gives a warning. Coordinates are in
 metres: a pattern over 1,000,000 holes or rows is refused (usually an outline drawn in mm), and
 `io.read_dxf_outline` warns when the DXF header (`$INSUNITS`) gives other units.
 

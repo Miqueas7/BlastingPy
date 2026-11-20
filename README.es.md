@@ -318,7 +318,7 @@ holes.loc[front, "burden_m"] = holes.loc[front, "crest_distance_m"]
 **Límites.** Taladros verticales, una sola cara libre (la cresta) y un solo explosivo por taladro (columna completa,
 sin cubiertas). La regla de los taladros de borde y las reglas de las filas (paralelas a la recta de la cresta, las
 filas vacías se saltan) son decisiones de diseño sin fuente publicada. No se agrega una fila parcial al fondo: un
-hueco trasero mayor que B/2 solo da un aviso. Las coordenadas van en metros: una malla de más de 1 000 000 de taladros
+el contorno es el límite del material a volar, y un hueco trasero mayor que B solo da un aviso. Las coordenadas van en metros: una malla de más de 1 000 000 de taladros
 o de filas se rechaza (casi siempre un contorno dibujado en mm), y `io.read_dxf_outline` avisa cuando la cabecera del
 DXF (`$INSUNITS`) indica otras unidades.
 

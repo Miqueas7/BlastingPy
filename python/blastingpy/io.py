@@ -1082,6 +1082,8 @@ def _one_polyline(msp, layer: str):
     if len(found) != 1:
         raise ValueError(f"layer '{layer}' has {len(found)} polylines; expected 1")
     e = found[0]
+    if e.dxftype() == "POLYLINE" and (e.is_poly_face_mesh or e.is_polygon_mesh):
+        raise ValueError(f"layer '{layer}' holds a mesh, not a polyline; draw the outline as a polyline")
     from ezdxf import path
     # make_path pasa del OCS de la entidad al mundo (dibujos espejados) y convierte los arcos en cuerdas
     pts = [(v.x, v.y) for v in path.make_path(e).flattening(_ARC_TOLERANCE_M)]

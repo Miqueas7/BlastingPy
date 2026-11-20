@@ -1,4 +1,5 @@
 import math
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -13,7 +14,6 @@ from blastingpy._blastingpy_core import _pattern as core
 # Datos inventados: un rectángulo de 40 × 20 m con la cresta en el lado y = 0.
 RECT = np.array([[0.0, 0.0], [40.0, 0.0], [40.0, 20.0], [0.0, 20.0]])
 CREST = np.array([[0.0, 0.0], [40.0, 0.0]])
-REAR_GAP = "ignore:rear gap"  # 20 m es múltiplo exacto de B = 4: el hueco trasero es B y el aviso salta (§4.2)
 ALL = dict(diameter_mm=165.0, bench_height_m=10.0, rock_density_kg_m3=2700.0, explosive_density_kg_m3=850.0,
            initiation="delayed", ucs_mpa=100.0, explosive_class="low_density")
 COLUMNS = ["burden_m", "spacing_m", "stemming_m", "subdrill_m", "method_id", "verification", "source", "note"]
@@ -53,7 +53,6 @@ def test_burden_methods_requires_initiation():
         pt.burden_methods(**{**ALL, "explosive_class": "heavy"})
 
 
-@pytest.mark.filterwarnings(REAR_GAP)
 def test_layout_default_staggered_spacing():
     holes = pt.layout(RECT, CREST, burden_m=4.0)
     assert list(holes.columns) == ["hole_id", "row", "x_m", "y_m", "along_m", "edge", "burden_m", "spacing_m",
@@ -66,7 +65,6 @@ def test_layout_default_staggered_spacing():
         pt.layout(RECT[:, 0], CREST, burden_m=4.0)
 
 
-@pytest.mark.filterwarnings(REAR_GAP)
 def test_layout_warns_irregular_crest():
     bumpy = np.array([[0.0, 0.0], [20.0, 2.5], [40.0, 0.0]])  # la cresta real se mete 2,5 m: la fila 0 queda cerca
     with pytest.warns(UserWarning, match="front row"):
@@ -74,7 +72,6 @@ def test_layout_warns_irregular_crest():
 
 
 @pytest.mark.filterwarnings("ignore:front row")
-@pytest.mark.filterwarnings(REAR_GAP)
 def test_layout_crest_distance_is_the_real_front_burden():
     # Entrante de 2 m entre x = 15 y x = 25: frente a él la fila 0 (y = 4) queda a 2 m de la cresta, no a B = 4.
     notch = np.array([[0.0, 0.0], [15.0, 0.0], [15.0, 2.0], [25.0, 2.0], [25.0, 0.0], [40.0, 0.0]])
@@ -104,12 +101,20 @@ def test_layout_rejects_non_numeric_burden(bad):
         pt.layout(RECT, CREST, burden_m=bad)
 
 
-def test_layout_warns_rear_gap():
-    with pytest.warns(UserWarning, match="rear gap"):
+def test_layout_rear_gap_of_one_burden_is_normal():
+    # 20 m de fondo con B = 4: la última fila queda a un burden del fondo (el contorno es el límite del material)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         pt.layout(RECT, CREST, burden_m=4.0)
 
 
-@pytest.mark.filterwarnings(REAR_GAP)
+def test_layout_warns_rear_gap_beyond_one_burden():
+    # una punta angosta atrás, hasta 30 m, que ninguna fila alcanza: hueco > B
+    spike = np.array([[0, 0], [40, 0], [40, 20], [20.5, 20], [20, 30], [19.5, 20], [0, 20]], dtype=float)
+    with pytest.warns(UserWarning, match="rear gap"):
+        pt.layout(spike, CREST, burden_m=4.0)
+
+
 def test_sequence_adds_delays_and_rejects_missing_front_row():
     holes = pt.layout(RECT, CREST, burden_m=4.0)
     out = pt.sequence(holes, scheme="row", hole_delay_ms=17.0, row_delay_ms=100.0)
@@ -146,7 +151,6 @@ def test_chain_into_simulate_blast_and_flyrock():
     assert flyrock.compare(holes, k=20.0)["rm_max_m"].notna().all()
 
 
-@pytest.mark.filterwarnings(REAR_GAP)
 def test_charge_rejects_no_column():
     holes = pt.layout(RECT, CREST, burden_m=4.0)
     with pytest.raises(ValueError, match="stemming_m"):

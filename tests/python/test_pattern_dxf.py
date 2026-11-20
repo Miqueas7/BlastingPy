@@ -11,7 +11,6 @@ ezdxf = pytest.importorskip("ezdxf")
 # Datos inventados: rectángulo de 40 × 20 m con la cresta en y = 0.
 RECT = np.array([[0.0, 0.0], [40.0, 0.0], [40.0, 20.0], [0.0, 20.0]])
 CREST = np.array([[0.0, 0.0], [40.0, 0.0]])
-pytestmark = pytest.mark.filterwarnings("ignore:rear gap")
 
 
 def _holes():
@@ -123,6 +122,17 @@ def test_read_outline_layer_names_ignore_case(tmp_path):
     _write(f, [("CONTORNO", RECT.tolist(), True), ("CRESTA", CREST.tolist(), False)])
     outline, _ = io.read_dxf_outline(f, outline_layer="contorno", crest_layer="cresta")
     assert outline.shape == (4, 2)
+
+
+def test_read_outline_rejects_a_mesh(tmp_path):
+    f = tmp_path / "mesh.dxf"
+    doc = ezdxf.new("R2010")
+    mesh = doc.modelspace().add_polyface(dxfattribs={"layer": "C"})
+    mesh.append_face([(0, 0, 0), (40, 0, 0), (40, 20, 0), (0, 20, 0)])
+    doc.modelspace().add_lwpolyline(CREST.tolist(), dxfattribs={"layer": "K"})
+    doc.saveas(f)
+    with pytest.raises(ValueError, match="holds a mesh"):
+        io.read_dxf_outline(f, outline_layer="C", crest_layer="K")
 
 
 def _ties(f):

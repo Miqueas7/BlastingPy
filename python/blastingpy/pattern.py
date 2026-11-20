@@ -121,8 +121,9 @@ def layout(outline, crest, *, burden_m: float, spacing_m: float | None = None, a
     NaN in the other rows. For flyrock, put ``crest_distance_m`` in place of ``burden_m`` in the front row before
     ``flyrock.compare``: face-burst range grows as the burden shrinks, so the design burden underestimates it where
     the crest comes closer. Warnings: the front-row holes whose distance to the real crest differs from ``burden_m``
-    by more than ``front_tolerance`` (a fraction), and a rear gap larger than ``burden_m / 2`` between the last row
-    and the outline (no partial row is added there). Raises if no hole fits, and before generating anything if the
+    by more than ``front_tolerance`` (a fraction), and a rear gap larger than ``burden_m`` between the last row
+    and the outline (the outline is the limit of the rock to blast, so a gap of one burden is normal; no partial row
+    is added there). Raises if no hole fits, and before generating anything if the
     pattern would pass 1,000,000 holes or rows (outline area / (B S) or depth / B): usually an outline in mm.
     """
     arr = _choice("arrangement", arrangement, _ARRANGEMENTS)
@@ -142,9 +143,9 @@ def layout(outline, crest, *, burden_m: float, spacing_m: float | None = None, a
     if res.front_off_ids:
         warnings.warn(f"front row: holes {list(res.front_off_ids)} are more than {front_tolerance:.0%} off the design "
                       f"burden ({burden_m:g} m) from the real crest", UserWarning, stacklevel=2)
-    if res.rear_gap_m > burden_m / 2:
+    if res.rear_gap_m > burden_m * (1 + 1e-9):  # el contorno es el límite del material: un hueco de B es lo normal
         warnings.warn(f"rear gap: {res.rear_gap_m:.2f} m between the last row and the back of the outline, more than "
-                      "burden_m / 2; no partial row is added there", UserWarning, stacklevel=2)
+                      "burden_m; no partial row is added there", UserWarning, stacklevel=2)
     return holes
 
 

@@ -27,8 +27,8 @@ konya = methods.loc["konya"]  # the only [V1] method here; the example takes it
 burden, spacing = round(float(konya.burden_m), 1), round(float(konya.spacing_m), 1)
 print(f"\nChosen: Konya, burden {burden} m, spacing {spacing} m (drilled-pattern frame)\n")
 
-# 2. Invented outline (local coordinates, m) and the free-face crest along its front. The depth, 26 m, is not a
-#    multiple of the burden, so the last row leaves no rear gap worth a warning.
+# 2. Invented outline (local coordinates, m) and the free-face crest along its front. The outline is the limit
+#    of the rock to blast, so the last row ends up about one burden from its back.
 outline = np.array([[0.0, 0.0], [48.0, 0.0], [48.0, 26.0], [0.0, 26.0]])
 crest = np.array([[0.0, 0.0], [48.0, 0.0]])
 holes = pattern.layout(outline, crest, burden_m=burden, spacing_m=spacing, arrangement="rectangular")
