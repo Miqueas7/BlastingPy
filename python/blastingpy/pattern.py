@@ -286,7 +286,8 @@ def to_dxf(holes: pd.DataFrame, path, *, outline, crest, diameter_mm: float | No
             for b in branches:
                 if len(b) > 1:
                     msp.add_lwpolyline(list(zip(b["x_m"], b["y_m"])), dxfattribs={"layer": names["tie"]})
-    # ezdxf does not create the layer table entries by itself; sorted so the same pattern gives the same file
+    # ezdxf does not create the layer table entries by itself; sorted so the same pattern gives the same layers and
+    # entities in the same order (ezdxf still stamps a new date and GUIDs on each file)
     for name in sorted({e.dxf.layer for e in msp}):
         if name not in doc.layers:
             doc.layers.add(name)
