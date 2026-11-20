@@ -12,6 +12,7 @@ from . import waveform  # noqa: F401
 from . import airblast  # noqa: F401
 from . import flyrock  # noqa: F401
 from . import nearfield  # noqa: F401
+from . import pattern  # noqa: F401
 from .events import read_events, write_events_template  # noqa: F401
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"

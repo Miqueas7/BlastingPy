@@ -11,22 +11,23 @@ magnitud y el método de frecuencia que usó.
 **Documentación: <https://miqueas.dev/blastingpy>** (guía, métodos, casos resueltos y referencia de la API, en español
 e inglés).
 
-**Estado:** versión 0.1.1 (la 0.1.0 fue la primera publicada; la 0.1.1 solo corrige los metadatos del paquete). Sus cinco bloques: tabla de eventos, ley de atenuación, carga máxima y
-veredicto de cumplimiento; lectura de registros del sismógrafo (forma de onda, PPV, suma vectorial, frecuencia);
-sobrepresión de aire; proyección de rocas (modelos publicados de alcance, comparación por pozo y distancia de despeje);
-y vibración en campo cercano (Holmberg-Persson, Heelan, simulación de la voladura completa y su Monte Carlo).
+**Estado:** versión 0.2.0. Sus seis bloques: tabla de eventos, ley de atenuación, carga máxima y veredicto de
+cumplimiento; lectura de registros del sismógrafo (forma de onda, PPV, suma vectorial, frecuencia); sobrepresión de
+aire; proyección de rocas (modelos publicados de alcance, comparación por pozo y distancia de despeje); vibración en
+campo cercano (Holmberg-Persson, Heelan, simulación de la voladura completa y su Monte Carlo); y la malla de banco
+(burden por varios métodos, reparto de taladros, secuencia de encendido, carga por taladro y DXF).
 
 ## Instalación
 
 ```bash
-python -m pip install "blastingpy[io,viz]"
+python -m pip install "blastingpy[io,viz,dxf]"
 ```
 
-Hay ruedas para Python 3.10 a 3.14 en Linux, Windows y macOS. Extras: `io` (leer y escribir `.xlsx`), `viz` (gráficos),
+Hay ruedas para Python 3.10 a 3.14 en Linux, Windows y macOS. Extras: `io` (leer y escribir `.xlsx`), `viz` (gráficos), `dxf` (leer y escribir `.dxf`),
 `seismic` (lectores de ObsPy). Para compilar desde la distribución de código fuente de PyPI (hacen falta un compilador de C++ y CMake):
 
 ```bash
-python -m pip install --no-binary blastingpy "blastingpy[io,viz]"
+python -m pip install --no-binary blastingpy "blastingpy[io,viz,dxf]"
 ```
 
 ## Ejemplo
@@ -274,6 +275,53 @@ Una versión completa y ejecutable con datos sintéticos está en [el caso resue
 
 **No entra, y qué artículo lo destrabaría:** el modelo de Heelan escalado y su constante γ_n (Blair y Minchinton 2006, Fragblast-8, pp. 152-159; la columna de aquí es el elemento de Heelan estándar con los pesos de Blair 2008); la solución exacta de la carga corta (Blair 2007 y Meredith 1990; leída, fuera del alcance); la semilla fluctuante del Monte Carlo (su normalización se deriva en Blair 1993a, Int. J. Numer. Anal. Methods Geomech. 17: 95-118); la composición de las componentes longitudinal, transversal y vertical (Blair 1999, ecs. 15a-15c: la convención de signos depende de una figura); la carga estadística y su espectro (Blair 1999, ecs. 17-23: leídas, sin implementar; la ec. 23 impresa trae un factor que su propio límite no da); la partición de energía de Heelan y su razón SV/P de 1,6 (las fórmulas impresas son inconsistentes); el PPV al final de la zona triturada (Onederra y Esen 2004, ec. 5, con Liu y Katsabanis 1993 y Esen et al. 2003: un exponente no se pudo verificar y pide presiones de detonación no ideal); y los artículos de Holmberg y Persson (1979) y Persson, Holmberg y Lee (1994, p. 247), con los que la integral, las constantes de superficie y el PPV crítico pasarían a [V1]. Su límite de daño de 700-1000 mm/s es de rocas ígneas suecas, según NIOSH, y no se ofrece como criterio general.
 
+## Malla de banco
+
+`blastingpy.pattern` calcula el burden con cuatro métodos lado a lado (Konya [V1, FHWA], López Jimeno y Ash [V2];
+Langefors-Kihlström figura pero no está implementado, porque las dos fuentes secundarias que dan su ecuación no
+coinciden, a la espera del libro de 1978), reparte los taladros dentro del contorno de la voladura, asigna los tiempos
+(secuencia por fila o en V), calcula la carga por taladro y escribe un DXF (contorno, cresta en su propia capa `CRESTA`,
+taladros por fila o por retardo, rótulos y amarre). El DXF necesita el extra opcional `dxf`. Los hechos y las marcas
+están en [el sitio de documentación](https://miqueas.dev/blastingpy/).
+
+```python
+import numpy as np
+from blastingpy import pattern
+
+methods = pattern.burden_methods(diameter_mm=165.0, bench_height_m=10.0, rock_density_kg_m3=2700.0,
+                                 explosive_density_kg_m3=850.0, initiation="delayed", ucs_mpa=90.0,
+                                 explosive_class="low_density")          # one row per method
+outline = np.array([[0.0, 0.0], [48.0, 0.0], [48.0, 26.0], [0.0, 26.0]])
+crest = np.array([[0.0, 0.0], [48.0, 0.0]])
+konya = methods.loc["konya"]
+holes = pattern.layout(outline, crest, burden_m=4.2, spacing_m=4.9, arrangement="rectangular")
+holes = pattern.sequence(holes, scheme="v", hole_delay_ms=17.0, row_delay_ms=42.0)
+holes = pattern.charge(holes, bench_height_m=10.0, subdrill_m=konya.subdrill_m, stemming_m=konya.stemming_m,
+                       diameter_mm=165.0, explosive_density_kg_m3=850.0)
+pattern.to_dxf(holes, "malla.dxf", outline=outline, crest=crest, diameter_mm=165.0)   # needs blastingpy[dxf]
+```
+
+Una versión completa y ejecutable, con un contorno inventado y el PPV simulado al final, está en
+`examples/06-bench-pattern/` de la distribución de código fuente.
+
+**Primera fila y proyección de rocas.** `layout` pone el burden de diseño en `burden_m` en todos los taladros y agrega
+`crest_distance_m`: la distancia de cada taladro de la primera fila a la cresta real, NaN en las demás filas. Esa
+distancia es el burden real de la primera fila. `flyrock.compare` lee `burden_m`, y el alcance por la cara crece como
+B^-2,6 (Richards y Moore): un burden de frente 20 % menor da cerca de 1,8 veces el alcance. Antes de comparar, pon el
+burden real en la primera fila:
+
+```python
+front = holes["row"] == 0
+holes.loc[front, "burden_m"] = holes.loc[front, "crest_distance_m"]
+```
+
+**Límites.** Taladros verticales, una sola cara libre (la cresta) y un solo explosivo por taladro (columna completa,
+sin cubiertas). La regla de los taladros de borde y las reglas de las filas (paralelas a la recta de la cresta, las
+filas vacías se saltan) son decisiones de diseño sin fuente publicada. No se agrega una fila parcial al fondo: un
+hueco trasero mayor que B/2 solo da un aviso. Las coordenadas van en metros: una malla de más de 1 000 000 de taladros
+o de filas se rechaza (casi siempre un contorno dibujado en mm), y `io.read_dxf_outline` avisa cuando la cabecera del
+DXF (`$INSUNITS`) indica otras unidades.
+
 ## Convenciones
 
 - **Unidades.** Dentro de la librería todo es SI: m, kg, mm/s, Hz. `read_events(units="imperial")` (o un diccionario por
@@ -377,7 +425,7 @@ Si BlastingPy te sirve en tu trabajo, cítala (los metadatos están en `CITATION
 distribución de código fuente):
 
 > Quintanilla Ventura, M. (2026). *BlastingPy: blast vibration, airblast, flyrock and near-field analysis for mining*
-> (versión 0.1.1) [Software]. https://miqueas.dev/blastingpy
+> (versión 0.2.0) [Software]. https://miqueas.dev/blastingpy
 
 Cada resultado registra además el método y la fuente que sigue (`MethodInfo`); cita también esa fuente original.
 

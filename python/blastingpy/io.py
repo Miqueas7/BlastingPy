@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 import re
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -25,7 +26,7 @@ from ._blastingpy_core import _units
 from .events import _AMBIGUOUS, _NUMBER, _decode, _number, _other_mark, _param_error, _read_csv
 
 __all__ = ["Record", "from_arrays", "infer_units", "read_instantel_ascii", "read_instantel_histogram",
-           "read_waveform_csv", "read_obspy"]
+           "read_waveform_csv", "read_obspy", "read_dxf_outline"]
 
 CHANNEL_NAMES = ("transverse", "vertical", "longitudinal", "mic")
 SOURCES = ("arrays", "instantel-thor", "instantel-blastware-table", "instantel-blastware-blocks",
@@ -1059,3 +1060,50 @@ def read_waveform_csv(path, *, columns: Mapping[str, str], units: Mapping[str, s
         sample_rate_hz, pretrigger, warns = _time_axis(data.pop("time"), sample_rate_hz, pretrigger_s)
     return _make_record(data, sample_rate_hz, units=units, pretrigger_s=pretrigger, start=None, metadata=None,
                         source="csv", format_evidence="user", warnings=warns)
+
+
+_DXF_HINT = "ezdxf is required to read or write .dxf files: pip install blastingpy[dxf]"
+
+
+def _require_ezdxf():
+    try:
+        import ezdxf
+    except ImportError:
+        raise ImportError(_DXF_HINT) from None
+    return ezdxf
+
+
+def _one_polyline(msp, layer: str):
+    found = [e for e in msp if e.dxftype() in ("LWPOLYLINE", "POLYLINE") and e.dxf.layer == layer]
+    if len(found) != 1:
+        raise ValueError(f"layer '{layer}' has {len(found)} polylines; expected 1")
+    e = found[0]
+    if e.dxftype() == "LWPOLYLINE":
+        pts = [(p[0], p[1]) for p in e.get_points("xy")]
+    else:
+        pts = [(v.dxf.location.x, v.dxf.location.y) for v in e.vertices]
+    return np.array(pts, dtype=float), bool(e.is_closed)
+
+
+def read_dxf_outline(path, *, outline_layer: str, crest_layer: str) -> tuple[np.ndarray, np.ndarray]:
+    """Outline and crest of a bench from a DXF file, as (N, 2) arrays in the file's units (m for a pattern).
+
+    Each layer must hold exactly one LWPOLYLINE or 2D POLYLINE. The outline must be closed, by the closed flag or by a
+    last point equal to the first (that repeated point is dropped); the crest may be open or closed. Warns
+    when the header ``$INSUNITS`` gives units other than metres (6) or unitless (0). Needs
+    ``pip install blastingpy[dxf]``.
+    """
+    ezdxf = _require_ezdxf()
+    doc = ezdxf.readfile(path)
+    units = doc.header.get("$INSUNITS", 0)
+    if units not in (0, 6):  # 0 sin unidades, 6 metros
+        warnings.warn(f"DXF $INSUNITS = {units}: the drawing is not in metres (6) nor unitless (0), but the "
+                      "coordinates are read as metres; check units (mm vs m?)", UserWarning, stacklevel=2)
+    msp = doc.modelspace()
+    outline, closed = _one_polyline(msp, outline_layer)
+    if len(outline) > 1 and np.array_equal(outline[0], outline[-1]):
+        outline, closed = outline[:-1], True
+    if not closed:
+        raise ValueError(f"layer '{outline_layer}': the outline polyline is not closed (set the closed flag or "
+                         "repeat the first point at the end)")
+    return outline, _one_polyline(msp, crest_layer)[0]

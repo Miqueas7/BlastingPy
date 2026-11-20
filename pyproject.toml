@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "blastingpy"
 dynamic = ["readme"]
-version = "0.1.1"
+version = "0.2.0"
 description = "Blast vibration, airblast, flyrock and near-field analysis for mining. C++ core, Python API"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -38,6 +38,7 @@ Documentation = "https://miqueas.dev/blastingpy"
 test = ["pytest>=7.0", "hypothesis>=6.0"]
 io = ["openpyxl>=3.1"]
 viz = ["matplotlib>=3.8"]
+dxf = ["ezdxf>=1.4"]
 seismic = ["obspy>=1.4"]
 
 [tool.scikit-build]
@@ -56,7 +57,7 @@ testpaths = ["tests/python"]
 build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
 # 32 bits fuera: numpy, pandas y matplotlib, que piden las pruebas, ya no publican ruedas de 32 bits
 skip = "pp* *-musllinux* *-win32 *_i686"
-test-requires = "pytest hypothesis openpyxl matplotlib numpy pandas"
+test-requires = "pytest hypothesis openpyxl matplotlib ezdxf numpy pandas"
 test-command = "pytest {project}/tests/python -q -p no:cacheprovider"
 
 [tool.hatch.metadata.hooks.fancy-pypi-readme]

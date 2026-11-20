@@ -15,6 +15,7 @@
 #include "blastingpy/least_squares.hpp"
 #include "blastingpy/method_info.hpp"
 #include "blastingpy/nearfield.hpp"
+#include "blastingpy/pattern.hpp"
 #include "blastingpy/units.hpp"
 #include "blastingpy/waveform.hpp"
 
@@ -424,4 +425,70 @@ NB_MODULE(_blastingpy_core, m) {
     // Con guion bajo: no es un nombre público del núcleo (la API reexporta todos los públicos); lo lee
     // python/blastingpy/nearfield.py para aplicar la misma regla de «ya inició».
     nfd.attr("_time_tolerance_s") = nearfield::time_tolerance_s;
+
+    nb::module_ pat = m.def_submodule(
+        "_pattern", "Bench drill pattern: burden and spacing (Konya FHWA, Ash IC 8550, Lopez Jimeno via UC), the hole "
+                    "layout and the firing times. Every BlastDesign is in the drilled-pattern frame.");
+    nb::enum_<pattern::Initiation>(pat, "Initiation", "How the holes of a row fire.")
+        .value("Delayed", pattern::Initiation::Delayed)
+        .value("Instantaneous", pattern::Initiation::Instantaneous);
+    nb::enum_<pattern::ExplosiveClass>(pat, "ExplosiveClass", "Explosive class of Ash's K_B (IC 8550, p. 14).")
+        .value("LowDensity", pattern::ExplosiveClass::LowDensity, "K_B = 25 (ANFO)")
+        .value("Average", pattern::ExplosiveClass::Average, "K_B = 30")
+        .value("Dense", pattern::ExplosiveClass::Dense, "K_B = 35 (water gels, gelatins)");
+    nb::class_<pattern::BlastDesign>(
+        pat, "BlastDesign",
+        "Burden, spacing, stemming and subdrill (m) of the drilled pattern, with the method's info and a note.")
+        .def_ro("burden_m", &pattern::BlastDesign::burden_m)
+        .def_ro("spacing_m", &pattern::BlastDesign::spacing_m)
+        .def_ro("stemming_m", &pattern::BlastDesign::stemming_m)
+        .def_ro("subdrill_m", &pattern::BlastDesign::subdrill_m)
+        .def_ro("info", &pattern::BlastDesign::info)
+        .def_ro("note", &pattern::BlastDesign::note);
+    pat.def("konya", &pattern::konya, nb::arg("diameter_mm"), nb::arg("bench_height_m"), nb::arg("rock_density_kg_m3"),
+            nb::arg("explosive_density_kg_m3"), nb::arg("initiation"), nb::arg("kd") = 1.0, nb::arg("ks") = 1.0,
+            nb::arg("kr") = 1.0,
+            "Konya & Walter (1991), FHWA-HI-92-001: B = (2 SGe/SGr + 1.5) De Kd Ks Kr (ft, in), T = 0.7 B, J = 0.3 B, "
+            "S from the stiffness ratio L/B and the initiation (eqs. 7.1-7.4).");
+    pat.def("ash", &pattern::ash, nb::arg("diameter_mm"), nb::arg("explosive_class"), nb::arg("initiation"),
+            "Ash's ratios in Pugliese (1972), USBM IC 8550. Delayed: burden_m is the drilled row distance b = 1.4 B.");
+    pat.def("lopez_jimeno", &pattern::lopez_jimeno, nb::arg("diameter_mm"), nb::arg("ucs_mpa"),
+            "Lopez Jimeno et al. (2003) table by UCS, as adapted in U. Cantabria OCW, Tema 3.1, p. 18 (secondary).");
+
+    nb::class_<pattern::Point>(pat, "Point", "Plan-view point (m).")
+        .def(nb::init<double, double>(), nb::arg("x"), nb::arg("y"))
+        .def_ro("x", &pattern::Point::x)
+        .def_ro("y", &pattern::Point::y);
+    nb::enum_<pattern::Arrangement>(pat, "Arrangement", "Hole arrangement.")
+        .value("Square", pattern::Arrangement::Square)
+        .value("Rectangular", pattern::Arrangement::Rectangular)
+        .value("Staggered", pattern::Arrangement::Staggered);
+    nb::class_<pattern::Hole>(pat, "Hole", "A hole: id, row (0 = front), position (m), along_m and edge flag.")
+        .def(nb::init<int, int, double, double, double, bool>(), nb::arg("id"), nb::arg("row"), nb::arg("x"),
+             nb::arg("y"), nb::arg("along_m"), nb::arg("edge"))
+        .def_ro("id", &pattern::Hole::id)
+        .def_ro("row", &pattern::Hole::row)
+        .def_ro("x", &pattern::Hole::x)
+        .def_ro("y", &pattern::Hole::y)
+        .def_ro("along_m", &pattern::Hole::along_m)
+        .def_ro("edge", &pattern::Hole::edge);
+    nb::class_<pattern::Layout>(pat, "Layout", "Holes, the front-row holes off the design burden and the rear gap (m).")
+        .def_ro("holes", &pattern::Layout::holes)
+        .def_ro("front_off_ids", &pattern::Layout::front_off_ids)
+        .def_ro("rear_gap_m", &pattern::Layout::rear_gap_m)
+        .def_ro("crest_distance_m", &pattern::Layout::crest_distance_m);
+    pat.def("layout", &pattern::layout, nb::arg("outline"), nb::arg("crest"), nb::arg("burden_m"),
+            nb::arg("spacing_m"), nb::arg("arrangement"), nb::arg("front_tolerance") = 0.20,
+            "Bench pattern inside the outline: rows parallel to the crest chord, one global grid, edge holes at the "
+            "row ends. Raises if no hole fits.");
+    nb::enum_<pattern::Scheme>(pat, "Scheme", "Firing scheme.")
+        .value("Row", pattern::Scheme::Row, "row by row")
+        .value("V", pattern::Scheme::V, "V from an apex in the front row (FHWA figs. 7.15-7.16)");
+    nb::enum_<pattern::StartSide>(pat, "StartSide", "Side a row starts from, seen from the free face.")
+        .value("Left", pattern::StartSide::Left)
+        .value("Right", pattern::StartSide::Right);
+    pat.def("firing_times_ms", &pattern::firing_times_ms, nb::arg("holes"), nb::arg("scheme"),
+            nb::arg("hole_delay_ms"), nb::arg("row_delay_ms"), nb::arg("start") = pattern::StartSide::Left,
+            nb::arg("apex_hole_id") = -1,
+            "Nominal firing time (ms) of each hole, in input order. Rows must be numbered 0, 1, 2... without gaps.");
 }
