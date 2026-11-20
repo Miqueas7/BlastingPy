@@ -189,3 +189,20 @@ def test_missing_ezdxf_message(tmp_path, monkeypatch):
         pt.to_dxf(_holes(), tmp_path / "x.dxf", outline=RECT, crest=CREST)
     with pytest.raises(ImportError, match=r"blastingpy\[dxf\]"):
         io.read_dxf_outline(tmp_path / "x.dxf", outline_layer="C", crest_layer="K")
+
+
+def test_layer_names_unknown_key_or_bad_name(tmp_path):
+    with pytest.raises(ValueError, match="layer_names.*'outine'"):
+        pt.to_dxf(_holes(), tmp_path / "k.dxf", outline=RECT, crest=CREST, layer_names={"outine": "X"})
+    for bad in ("A/B", "", 7):
+        with pytest.raises(ValueError, match="layer_names"):
+            pt.to_dxf(_holes(), tmp_path / "k.dxf", outline=RECT, crest=CREST, layer_names={"tie": bad})
+
+
+def test_delay_layers_keep_fractional_delays_apart(tmp_path):
+    f = tmp_path / "frac.dxf"
+    h = _holes()
+    h.loc[h.index[:2], "delay_ms"] = [16.6, 17.4]
+    pt.to_dxf(h, f, outline=RECT, crest=CREST, layers_by="delay")
+    names = {la.dxf.name for la in ezdxf.readfile(f).layers}
+    assert {"RETARDO_0016.6", "RETARDO_0017.4", "RETARDO_0034"} <= names

@@ -160,3 +160,61 @@ def test_charge_rejects_no_column():
 
 def test_module_is_exported():
     assert bp.pattern is pt
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")  # la fila 0 fuera de tolerancia y el ángulo: no son el tema aquí
+def test_flyrock_takes_the_real_front_burden_from_crest_distance():
+    notch = np.array([[0.0, 0.0], [15.0, 0.0], [15.0, 2.0], [25.0, 2.0], [25.0, 0.0], [40.0, 0.0]])
+    holes = pt.layout(RECT, notch, burden_m=4.0, spacing_m=4.0, arrangement="square")
+    holes = pt.charge(holes, bench_height_m=10.0, subdrill_m=1.0, stemming_m=3.0, diameter_mm=165.0,
+                      explosive_density_kg_m3=850.0)
+    res = flyrock.compare(holes, k=20.0)
+    lin = flyrock.linear_charge(165.0, 850.0)
+    want = np.where(holes["crest_distance_m"].notna(), holes["crest_distance_m"], 4.0)
+    np.testing.assert_allclose(res["rm_face_burst_m"], [flyrock.rm_face_burst(20.0, lin, b) for b in want])
+    inside = (holes["row"] == 0) & holes["x_m"].between(15.0, 25.0)
+    assert (res.loc[inside, "rm_face_burst_m"] > res.loc[holes["row"] == 1, "rm_face_burst_m"].max()).all()
+    assert any("crest_distance_m" in w for w in res.attrs["warnings"])
+    assert (res["burden_m"] == 4.0).all()  # la columna de entrada no se toca
+
+
+def test_layout_square_tolerates_float_noise():
+    pt.layout(RECT, CREST, burden_m=4.2, spacing_m=4.2 * (1 + 1e-12), arrangement="square")
+    with pytest.raises(ValueError, match="spacing_m"):
+        pt.layout(RECT, CREST, burden_m=4.2, spacing_m=4.3, arrangement="square")
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+def test_layout_rotated_utm_crest_is_the_same_pattern():
+    a = math.radians(30.0)
+    rot = np.array([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
+    shift = np.array([500000.0, 8600000.0])
+    base = pt.layout(RECT, CREST, burden_m=4.0)
+    moved = pt.layout(RECT @ rot.T + shift, CREST @ rot.T + shift, burden_m=4.0)
+    assert len(moved) == len(base) and (moved["row"] == base["row"]).all()
+    np.testing.assert_allclose(moved["along_m"], base["along_m"], atol=1e-6)
+    np.testing.assert_allclose(moved[["x_m", "y_m"]], base[["x_m", "y_m"]].to_numpy() @ rot.T + shift, atol=1e-6)
+
+
+def test_sequence_v_with_explicit_apex_and_right_start():
+    holes = pt.layout(RECT, CREST, burden_m=4.0, spacing_m=4.0, arrangement="square")
+    front = holes[holes["row"] == 0].sort_values("along_m")
+    first = int(front["hole_id"].iloc[0])
+    s = pt.sequence(holes, scheme="v", hole_delay_ms=17.0, row_delay_ms=42.0, apex_hole=first)
+    f = s[s["row"] == 0].sort_values("along_m")
+    assert list(f["delay_ms"]) == [17.0 * i for i in range(len(f))]  # vértice en un extremo: sale en abanico
+    left = pt.sequence(holes, scheme="v", hole_delay_ms=17.0, row_delay_ms=42.0)
+    right = pt.sequence(holes, scheme="v", hole_delay_ms=17.0, row_delay_ms=42.0, start="right")
+    n = len(front)
+    apex_l = left.loc[left["delay_ms"].idxmin(), "along_m"]
+    apex_r = right.loc[right["delay_ms"].idxmin(), "along_m"]
+    if n % 2:
+        assert apex_l == apex_r
+    else:  # con un número par, el central «menor» se cuenta desde el lado de inicio
+        assert apex_l == front["along_m"].iloc[n // 2 - 1] and apex_r == front["along_m"].iloc[n // 2]
+
+
+def test_sequence_row_rejects_an_apex():
+    holes = pt.layout(RECT, CREST, burden_m=4.0)
+    with pytest.raises(ValueError, match="apex_hole"):
+        pt.sequence(holes, scheme="row", hole_delay_ms=17.0, row_delay_ms=42.0, apex_hole=1)

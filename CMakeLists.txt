@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(blastingpy
-    VERSION 0.2.0
+    VERSION 0.2.1
     DESCRIPTION "Blast vibration, airblast and flyrock analysis for mining"
     LANGUAGES CXX
 )

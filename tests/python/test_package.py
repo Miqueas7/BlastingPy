@@ -2,7 +2,7 @@ import blastingpy
 
 
 def test_version_and_core():
-    assert blastingpy.__version__ == "0.2.0"
+    assert blastingpy.__version__ == "0.2.1"
     info = blastingpy.MethodInfo("X", blastingpy.Verification.Secondary, "src")
     assert info.method_id == "X" and info.verification == blastingpy.Verification.Secondary
 

@@ -11,7 +11,7 @@ magnitud y el método de frecuencia que usó.
 **Documentación: <https://miqueas.dev/blastingpy>** (guía, métodos, casos resueltos y referencia de la API, en español
 e inglés).
 
-**Estado:** versión 0.2.0. Sus seis bloques: tabla de eventos, ley de atenuación, carga máxima y veredicto de
+**Estado:** versión 0.2.1. Sus seis bloques: tabla de eventos, ley de atenuación, carga máxima y veredicto de
 cumplimiento; lectura de registros del sismógrafo (forma de onda, PPV, suma vectorial, frecuencia); sobrepresión de
 aire; proyección de rocas (modelos publicados de alcance, comparación por pozo y distancia de despeje); vibración en
 campo cercano (Holmberg-Persson, Heelan, simulación de la voladura completa y su Monte Carlo); y la malla de banco
@@ -306,14 +306,9 @@ Una versión completa y ejecutable, con un contorno inventado y el PPV simulado 
 
 **Primera fila y proyección de rocas.** `layout` pone el burden de diseño en `burden_m` en todos los taladros y agrega
 `crest_distance_m`: la distancia de cada taladro de la primera fila a la cresta real, NaN en las demás filas. Esa
-distancia es el burden real de la primera fila. `flyrock.compare` lee `burden_m`, y el alcance por la cara crece como
-B^-2,6 (Richards y Moore): un burden de frente 20 % menor da cerca de 1,8 veces el alcance. Antes de comparar, pon el
-burden real en la primera fila:
-
-```python
-front = holes["row"] == 0
-holes.loc[front, "burden_m"] = holes.loc[front, "crest_distance_m"]
-```
+distancia es el burden real de la primera fila, y el alcance por la cara crece como B^-2,6 (Richards y Moore): un
+burden de frente 20 % menor da cerca de 1,8 veces el alcance. `flyrock.compare` toma `crest_distance_m` como burden de
+la proyección por la cara donde viene dado, y lo avisa en `warnings`; `burden_m` queda como estaba.
 
 **Límites.** Taladros verticales, una sola cara libre (la cresta) y un solo explosivo por taladro (columna completa,
 sin cubiertas). La regla de los taladros de borde y las reglas de las filas (paralelas a la recta de la cresta, las
@@ -425,7 +420,7 @@ Si BlastingPy te sirve en tu trabajo, cítala (los metadatos están en `CITATION
 distribución de código fuente):
 
 > Quintanilla Ventura, M. (2026). *BlastingPy: blast vibration, airblast, flyrock and near-field analysis for mining*
-> (versión 0.2.0) [Software]. https://miqueas.dev/blastingpy
+> (versión 0.2.1) [Software]. https://miqueas.dev/blastingpy
 
 Cada resultado registra además el método y la fuente que sigue (`MethodInfo`); cita también esa fuente original.
 

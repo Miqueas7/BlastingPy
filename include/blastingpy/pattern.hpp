@@ -178,7 +178,7 @@ inline Layout layout(const std::vector<Point>& outline, const std::vector<Point>
     validation::require_positive(spacing_m, "spacing_m");
     validation::require_non_negative(front_tolerance, "front_tolerance");
     if (arrangement == Arrangement::Square)
-        validation::require(spacing_m == burden_m, "spacing_m",
+        validation::require(std::fabs(spacing_m - burden_m) <= 1e-9 * burden_m, "spacing_m",
                             "must equal burden_m for a square pattern (use rectangular otherwise)", spacing_m);
     for (const auto& p : outline) {
         validation::require_finite(p.x, "outline x");

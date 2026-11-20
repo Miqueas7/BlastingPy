@@ -248,7 +248,8 @@ def compare(holes: pd.DataFrame, *, k: float, g: float = standard_gravity) -> pd
 
     Required columns: :data:`HOLE_COLUMNS` (``linear_charge_kg_m`` may be replaced by ``explosive_density_kg_m3``,
     300-2000 kg/m3, full-hole geometry, with a warning). Optional: ``charge_length_m``, ``hole_angle_from_vertical_deg``
-    (default 0), ``sdob_m_kg13`` (m/kg^(1/3)), ``powder_factor_kg_m3``. A NaN in an optional column means «not given
+    (default 0), ``sdob_m_kg13`` (m/kg^(1/3)), ``powder_factor_kg_m3``, ``crest_distance_m`` (the real front-row burden,
+    from ``pattern.layout``: where given, the face burst uses it instead of ``burden_m``, with a warning). A NaN in an optional column means «not given
     for that row»: NaN in that model's column, the per-metre charge, or a vertical hole. ``k`` is the Richards & Moore
     site constant (you supply it; a warning when it is outside [13.5, 37]).
 
@@ -313,6 +314,13 @@ def compare(holes: pd.DataFrame, *, k: float, g: float = standard_gravity) -> pd
         warns.append("hole angle not given: assumed vertical for every row, so rm_stemming_ejection_m is 0, but "
                      + _VERTICAL)
 
+    if "crest_distance_m" in out.columns:
+        crest = _column(out, "crest_distance_m", allow_nan=True)
+        real = ~np.isnan(crest)
+        if real.any():
+            b = np.where(real, crest, b)
+            warns.append("rm_face_burst_m uses crest_distance_m (the real front-row burden) instead of burden_m; "
+                         f"rows {list(out.index[real])}")
     short = clen < 1.0
     m = np.where(short, lin * np.where(short, clen, 1.0), lin)
     if short.any():

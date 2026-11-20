@@ -10,7 +10,7 @@ checks the result against a regulatory criterion, stating the edition, table, ma
 **Documentation: <https://miqueas.dev/blastingpy>** (guide, methods, worked examples and API reference, in English
 and Spanish).
 
-**Status:** version 0.2.0. Its six blocks: events table, attenuation law, maximum charge and compliance verdict;
+**Status:** version 0.2.1. Its six blocks: events table, attenuation law, maximum charge and compliance verdict;
 reading seismograph records (waveform, PPV, vector sum, frequency); airblast; flyrock (published range models, per-hole
 comparison and clearance distance); near-field vibration (Holmberg-Persson, Heelan, whole-blast simulation and its
 Monte Carlo); and the bench pattern (burden by several methods, hole layout, firing sequence, charge per hole and DXF).
@@ -300,13 +300,9 @@ of the source distribution.
 
 **Front row and flyrock.** `layout` puts the design burden in `burden_m` on every hole, and adds `crest_distance_m`: the
 distance from each front-row hole to the real crest, NaN in the other rows. That distance is the real burden of the
-front row. `flyrock.compare` reads `burden_m`, and the face-burst range grows as B^-2.6 (Richards & Moore), so a front
-burden 20 % short gives about 1.8 times the range. Put the real burden in the front row before comparing:
-
-```python
-front = holes["row"] == 0
-holes.loc[front, "burden_m"] = holes.loc[front, "crest_distance_m"]
-```
+front row, and the face-burst range grows as B^-2.6 (Richards & Moore): a front burden 20 % short gives about 1.8 times
+the range. `flyrock.compare` takes `crest_distance_m` as the face-burst burden wherever it is given, and says so in
+`warnings`; `burden_m` itself is left as it was.
 
 **Limits.** Vertical holes, one free face (the crest) and one explosive per hole (a full column, no decks). The
 edge-hole rule and the row rules (rows parallel to the crest line, empty rows skipped) are design decisions without a
@@ -416,7 +412,7 @@ If BlastingPy helps your work, please cite it (the metadata is in `CITATION.cff`
 source distribution):
 
 > Quintanilla Ventura, M. (2026). *BlastingPy: blast vibration, airblast, flyrock and near-field analysis for mining*
-> (version 0.2.0) [Computer software]. https://miqueas.dev/blastingpy
+> (version 0.2.1) [Computer software]. https://miqueas.dev/blastingpy
 
 Each result also records the method and source it follows (`MethodInfo`); cite that original source as well.
 

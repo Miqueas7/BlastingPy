@@ -118,9 +118,9 @@ def layout(outline, crest, *, burden_m: float, spacing_m: float | None = None, a
     Columns: ``hole_id`` (1, 2, ... from the crest), ``row`` (0 = front row), ``x_m``, ``y_m``, ``along_m`` (position
     along the rows), ``edge``, ``burden_m``, ``spacing_m`` and ``crest_distance_m``. ``burden_m`` is the design burden
     on every hole; ``crest_distance_m`` is the distance from each front-row hole to the real crest (its real burden),
-    NaN in the other rows. For flyrock, put ``crest_distance_m`` in place of ``burden_m`` in the front row before
-    ``flyrock.compare``: face-burst range grows as the burden shrinks, so the design burden underestimates it where
-    the crest comes closer. Warnings: the front-row holes whose distance to the real crest differs from ``burden_m``
+    NaN in the other rows. ``flyrock.compare`` takes ``crest_distance_m`` as the face-burst burden wherever it is
+    given: face-burst range grows as the burden shrinks, so the design burden would underestimate it where the crest
+    comes closer. Warnings: the front-row holes whose distance to the real crest differs from ``burden_m``
     by more than ``front_tolerance`` (a fraction), and a rear gap larger than ``burden_m`` between the last row
     and the outline (the outline is the limit of the rock to blast, so a gap of one burden is normal; no partial row
     is added there). Raises if no hole fits, and before generating anything if the
@@ -166,10 +166,12 @@ def sequence(holes: pd.DataFrame, *, scheme: str, hole_delay_ms: float, row_dela
 
     ``holes`` needs the columns ``hole_id``, ``row`` (0 = front row, numbered 0, 1, 2... without gaps) and
     ``along_m``, as :func:`layout` gives them. ``scheme`` is ``"row"`` (t = r row_delay + i hole_delay, i counted from
-    ``start``, ``"left"`` or ``"right"`` seen from the free face) or ``"v"`` (t = r row_delay + |i - i_apex|
-    hole_delay; the apex is ``apex_hole``, a front-row hole id, by default the central one, the lower of the two for
-    an even count). The delays have no default: you supply them. Holes symmetric about the apex share a nominal time
-    on purpose; the charge fired within 8 ms is evaluated by ``nearfield.simulate_blast`` (``max_charge_8ms_kg``).
+    ``start``: ``"left"`` is the smallest ``along_m``, the left end for someone in front of the face looking at it,
+    ``"right"`` the other end) or ``"v"`` (t = r row_delay + |i - i_apex| hole_delay; the apex is ``apex_hole``, a
+    front-row hole id, by default the central one, the lower of the two for an even count, counted from ``start``;
+    ``apex_hole`` is only for ``"v"``). The delays have no default: you supply them. Holes symmetric about the apex
+    share a nominal time on purpose; the charge fired within 8 ms is evaluated by ``nearfield.simulate_blast``
+    (``max_charge_8ms_kg``).
     """
     if not isinstance(holes, pd.DataFrame):
         raise _error("holes", "must be a pandas DataFrame")
@@ -178,6 +180,8 @@ def sequence(holes: pd.DataFrame, *, scheme: str, hole_delay_ms: float, row_dela
         raise _error("holes", f"is missing the column {miss[0]!r}. Required columns: ['hole_id', 'row', 'along_m']")
     sch = _choice("scheme", scheme, _SCHEMES)
     side = _choice("start", start, _SIDES)
+    if apex_hole is not None and scheme != "v":
+        raise _error("apex_hole", f"is only for scheme 'v'. Received: {apex_hole!r} with scheme {scheme!r}")
     if apex_hole is not None and not (isinstance(apex_hole, (int, np.integer)) and apex_hole >= 0):
         raise _error("apex_hole", f"must be the id of a front-row hole (an integer >= 0). Received: {apex_hole!r}")
     try:
@@ -202,9 +206,7 @@ def charge(holes: pd.DataFrame, *, bench_height_m: float, subdrill_m: float, ste
     ``flyrock.linear_charge(diameter_mm, explosive_density_kg_m3)`` (no decking or decoupling). Raises when the column
     would be zero or negative.
 
-    The result goes into ``flyrock.compare``, which reads ``burden_m``. From :func:`layout` that is the design burden
-    on every hole; in the front row the real burden is ``crest_distance_m``, so replace it there first, e.g.
-    ``front = holes["row"] == 0; holes.loc[front, "burden_m"] = holes.loc[front, "crest_distance_m"]``.
+    The result goes into ``flyrock.compare``, which takes the real front-row burden from ``crest_distance_m``.
     """
     if not isinstance(holes, pd.DataFrame):
         raise _error("holes", "must be a pandas DataFrame")
@@ -234,10 +236,11 @@ def to_dxf(holes: pd.DataFrame, path, *, outline, crest, diameter_mm: float | No
     """Write the pattern to a DXF R2010 file, in the same coordinates as ``holes`` (m).
 
     Layers: ``CONTORNO`` (outline, closed), ``CRESTA`` (crest), one per row ``FILA_01``... (or per nominal delay
-    ``RETARDO_0017``... with ``layers_by="delay"``, needs ``delay_ms``), ``TEXTO`` (``"id / delay ms"``, or only the
-    id without a sequence) and ``AMARRE`` (the tie-in, only with a sequence: one polyline per row joining the holes by
-    increasing ``firing_time_s``; for a V, two per row, from the apex outward on each side). ``layer_names`` renames
-    them: keys ``outline``, ``crest``, ``text``, ``tie`` and ``prefix`` (the ``FILA_`` / ``RETARDO_`` prefix). Each
+    ``RETARDO_0017``, ``RETARDO_0016.6``... with ``layers_by="delay"``, needs ``delay_ms``), ``TEXTO``
+    (``"id / delay ms"``, or only the id without a sequence) and ``AMARRE`` (the tie-in, only with a sequence: one
+    polyline per row joining the holes by increasing ``firing_time_s``; for a V, two per row, from the apex outward on
+    each side). ``layer_names`` renames them: keys ``outline``, ``crest``, ``text``, ``tie`` and ``prefix`` (the
+    ``FILA_`` / ``RETARDO_`` prefix); an unknown key or an invalid DXF layer name raises ValueError. Each
     hole is a circle of ``diameter_mm`` (the column of that name, else the argument; an error if neither). Needs
     ``pip install blastingpy[dxf]``.
     """
@@ -256,7 +259,14 @@ def to_dxf(holes: pd.DataFrame, path, *, outline, crest, diameter_mm: float | No
     if not (_number(text_height_m) and text_height_m > 0):
         raise _error("text_height_m", f"must be finite and > 0. Received: {text_height_m!r}")
     names = {"outline": "CONTORNO", "crest": "CRESTA", "text": "TEXTO", "tie": "AMARRE",
-             "prefix": "FILA_" if layers_by == "row" else "RETARDO_", **(layer_names or {})}
+             "prefix": "FILA_" if layers_by == "row" else "RETARDO_"}
+    from ezdxf.lldxf.validator import is_valid_layer_name
+    for key, value in (layer_names or {}).items():
+        if key not in names:
+            raise _error("layer_names", f"has an unknown key {key!r}. Keys: {list(names)}")
+        if not (isinstance(value, str) and value and is_valid_layer_name(value)):
+            raise _error("layer_names", f"[{key!r}]: {value!r} is not a valid DXF layer name (no <>/\\\":;?*|=`)")
+        names[key] = value
     if "diameter_mm" in holes.columns:
         diam = holes["diameter_mm"].to_numpy(dtype=float)
     elif diameter_mm is not None and _number(diameter_mm) and diameter_mm > 0:
@@ -269,7 +279,7 @@ def to_dxf(holes: pd.DataFrame, path, *, outline, crest, diameter_mm: float | No
     msp.add_lwpolyline(_points_xy("crest", crest), dxfattribs={"layer": names["crest"]})
     for (_, h), d in zip(holes.iterrows(), diam.tolist()):
         layer = (f"{names['prefix']}{int(h['row']) + 1:02d}" if layers_by == "row"
-                 else f"{names['prefix']}{int(round(h['delay_ms'])):04d}")
+                 else f"{names['prefix']}{h['delay_ms']:08.3f}".rstrip("0").rstrip("."))  # 17 -> 0017, 16.6 -> 0016.6
         x, y = float(h["x_m"]), float(h["y_m"])
         msp.add_circle((x, y), d / 2000.0, dxfattribs={"layer": layer})
         label = f"{int(h['hole_id'])} / {h['delay_ms']:g} ms" if seq else f"{int(h['hole_id'])}"
