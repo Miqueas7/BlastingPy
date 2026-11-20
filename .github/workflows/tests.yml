@@ -1,10 +1,11 @@
 name: Tests
 
-# Repo privado: sin correr en cada push (la matriz gasta los minutos gratuitos). El pull request ya cubre lo que
-# entra a main, así que no se corre otra vez al integrar.
+# Repo público (minutos gratuitos) y merge directo a main sin pull request: se prueba cada push a main.
 on:
   workflow_dispatch:
   pull_request:
+  push:
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
