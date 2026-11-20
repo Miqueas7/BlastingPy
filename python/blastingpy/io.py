@@ -1073,23 +1073,31 @@ def _require_ezdxf():
     return ezdxf
 
 
+_ARC_TOLERANCE_M = 0.05  # máxima distancia entre un arco (bulge) y las cuerdas que lo reemplazan
+
+
 def _one_polyline(msp, layer: str):
-    found = [e for e in msp if e.dxftype() in ("LWPOLYLINE", "POLYLINE") and e.dxf.layer == layer]
+    key = layer.casefold()  # en DXF los nombres de capa no distinguen mayúsculas
+    found = [e for e in msp if e.dxftype() in ("LWPOLYLINE", "POLYLINE") and e.dxf.layer.casefold() == key]
     if len(found) != 1:
         raise ValueError(f"layer '{layer}' has {len(found)} polylines; expected 1")
     e = found[0]
-    if e.dxftype() == "LWPOLYLINE":
-        pts = [(p[0], p[1]) for p in e.get_points("xy")]
-    else:
-        pts = [(v.dxf.location.x, v.dxf.location.y) for v in e.vertices]
-    return np.array(pts, dtype=float), bool(e.is_closed)
+    from ezdxf import path
+    # make_path pasa del OCS de la entidad al mundo (dibujos espejados) y convierte los arcos en cuerdas
+    pts = [(v.x, v.y) for v in path.make_path(e).flattening(_ARC_TOLERANCE_M)]
+    pts = np.array(pts, dtype=float)
+    if e.is_closed and len(pts) > 1 and np.allclose(pts[0], pts[-1]):
+        pts = pts[:-1]  # make_path repite el primer punto al cerrar
+    return pts, bool(e.is_closed)
 
 
 def read_dxf_outline(path, *, outline_layer: str, crest_layer: str) -> tuple[np.ndarray, np.ndarray]:
     """Outline and crest of a bench from a DXF file, as (N, 2) arrays in the file's units (m for a pattern).
 
-    Each layer must hold exactly one LWPOLYLINE or 2D POLYLINE. The outline must be closed, by the closed flag or by a
-    last point equal to the first (that repeated point is dropped); the crest may be open or closed. Warns
+    Each layer must hold exactly one LWPOLYLINE or POLYLINE (layer names are case-insensitive, as in DXF). Points are
+    returned in world coordinates (mirrored drawings with extrusion (0, 0, -1) are handled) and arcs (bulges) are
+    replaced by chords within 0.05 m. The outline must be closed, by the closed flag or by a last point equal to the
+    first (that repeated point is dropped); the crest may be open or closed. Warns
     when the header ``$INSUNITS`` gives units other than metres (6) or unitless (0). Needs
     ``pip install blastingpy[dxf]``.
     """
@@ -1101,7 +1109,7 @@ def read_dxf_outline(path, *, outline_layer: str, crest_layer: str) -> tuple[np.
                       "coordinates are read as metres; check units (mm vs m?)", UserWarning, stacklevel=2)
     msp = doc.modelspace()
     outline, closed = _one_polyline(msp, outline_layer)
-    if len(outline) > 1 and np.array_equal(outline[0], outline[-1]):
+    if len(outline) > 1 and np.allclose(outline[0], outline[-1]):
         outline, closed = outline[:-1], True
     if not closed:
         raise ValueError(f"layer '{outline_layer}': the outline polyline is not closed (set the closed flag or "

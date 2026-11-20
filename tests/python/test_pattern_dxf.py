@@ -93,6 +93,38 @@ def test_read_outline_warns_non_metric_units(tmp_path):
         io.read_dxf_outline(f, outline_layer="C", crest_layer="K")
 
 
+def test_read_outline_in_world_coordinates_when_mirrored(tmp_path):
+    # extrusión (0,0,-1): la x del OCS es la -x del mundo; leer el OCS espejaba la malla
+    f = tmp_path / "m.dxf"
+    doc = ezdxf.new("R2010")
+    ocs = (RECT * [-1.0, 1.0]).tolist()
+    doc.modelspace().add_lwpolyline(ocs, close=True, dxfattribs={"layer": "C", "extrusion": (0, 0, -1)})
+    doc.modelspace().add_lwpolyline((CREST * [-1.0, 1.0]).tolist(), dxfattribs={"layer": "K", "extrusion": (0, 0, -1)})
+    doc.saveas(f)
+    outline, crest = io.read_dxf_outline(f, outline_layer="C", crest_layer="K")
+    assert np.allclose(outline, RECT) and np.allclose(crest, CREST)
+
+
+def test_read_outline_follows_arcs(tmp_path):
+    # lado derecho en semicírculo de radio 10 hacia afuera: debe llegar a x = 50, no quedarse en la cuerda x = 40
+    f = tmp_path / "a.dxf"
+    doc = ezdxf.new("R2010")
+    pts = [(0, 0, 0), (40, 0, 1), (40, 20, 0), (0, 20, 0)]
+    doc.modelspace().add_lwpolyline(pts, format="xyb", close=True, dxfattribs={"layer": "C"})
+    doc.modelspace().add_lwpolyline(CREST.tolist(), dxfattribs={"layer": "K"})
+    doc.saveas(f)
+    outline, _ = io.read_dxf_outline(f, outline_layer="C", crest_layer="K")
+    assert outline[:, 0].max() == pytest.approx(50.0, abs=0.05)
+    assert not np.allclose(outline[0], outline[-1])  # sin el punto de cierre repetido
+
+
+def test_read_outline_layer_names_ignore_case(tmp_path):
+    f = tmp_path / "c.dxf"
+    _write(f, [("CONTORNO", RECT.tolist(), True), ("CRESTA", CREST.tolist(), False)])
+    outline, _ = io.read_dxf_outline(f, outline_layer="contorno", crest_layer="cresta")
+    assert outline.shape == (4, 2)
+
+
 def _ties(f):
     return [[tuple(p[:2]) for p in e.get_points()]
             for e in ezdxf.readfile(f).modelspace().query("LWPOLYLINE[layer=='AMARRE']")]
